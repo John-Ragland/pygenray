@@ -1,7 +1,7 @@
-# pyigenray
+# pygenray
 
-[![PyPI - Version](https://img.shields.io/pypi/v/pyigenray.svg)](https://pypi.org/project/pyigenray)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pyigenray.svg)](https://pypi.org/project/pyigenray)
+[![PyPI - Version](https://img.shields.io/pypi/v/pygenray.svg)](https://pypi.org/project/pygenray)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pygenray.svg)](https://pypi.org/project/pygenray)
 
 -----
 
@@ -18,9 +18,9 @@ A python package for simulated 2D ray-based acoustic propagation underwater. Thi
 ## Installation
 
 ```console
-pip install pyigenray
+pip install pygenray
 ```
 
 ## License
 
-`pyigenray` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.
+`pygenray` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.

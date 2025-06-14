@@ -1,5 +1,5 @@
 """
-pyigenray - python based implementation of underwater acoustic ray simulation
+pygenray - python based implementation of underwater acoustic ray simulation
 """
 import xarray as xr
 import numpy as np

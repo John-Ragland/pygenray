@@ -3,4 +3,3 @@
 # SPDX-License-Identifier: MIT
 
 from .pygenray_scipy import *
-from .shared_memory_test import *

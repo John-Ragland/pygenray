@@ -1,13 +1,13 @@
-"""
-implementation of pygenray using scipy
-"""
 import numba
 import numpy as np
 import scipy.integrate
-import pyigenray as pr
+import pygenray as pr
 import ocean_acoustic_env as oaenv
 import scipy
 from multiprocessing import shared_memory
+import multiprocessing as mp
+from functools import partial
+from tqdm import tqdm
 
 @numba.njit(fastmath=True, cache=True)
 def bilinear_interp(x, y, x_grid, y_grid, values):
@@ -309,7 +309,7 @@ def shoot_ray_segment(
 ):
     """
     Given an initial condition vector and initial range, integrate ray
-    until integration bounds or event is triggered.
+    until integration bounds or event is triggered (such as surface or bottom bounce).
 
     Parameters
     ----------
@@ -367,14 +367,15 @@ def shoot_ray_segment(
     return sol
 
 def shoot_ray(
-        source_depth : np.array,
-        source_range : np.array,
-        launch_angle : np.array,
+        source_depth : float,
+        source_range : float,
+        launch_angles : np.array,
         reciever_range : float,
         x_eval : np.array,
         environment : oaenv.environment.OceanEnvironment2D,
         rtol = 1e-6,
-        terminal_backwards : bool = True
+        terminal_backwards : bool = True,
+        n_processes : int = None,
 ):
     '''
     given arrays of source depth, range, and launch angle, integrate ray to reciever range. For depth (m,), range (n,), and angle (k,), number of ray runs will be m*n*k.
@@ -395,6 +396,10 @@ def shoot_ray(
         OceanEnvironment object specifying sound speed and bathymetry.
     rtol : float
         relative tolerance for the ODE solver, default is 1e-6
+    terminate_backwards : bool
+        whether to terminate ray if it bounces backwards
+    n_processes : int
+        number of processes to use, Default of None (mp.cpu_count)
 
     Returns
     -------
@@ -405,6 +410,9 @@ def shoot_ray(
     n_surf : int
         number of surface bounces
     '''
+
+    if n_processes == None:
+        n_processes = mp.cpu_count()
     # set up initial conditions for ray variable
 
     ## unpack environment object
@@ -423,42 +431,40 @@ def shoot_ray(
     if not (np.all(np.diff(depth_ranges) >= 0)):
         raise Exception('Bathymetry range coordinates must be monotonically increasing.')
     
+    # Create Shared Arrays
+    array_metadata, shms = _init_shared_memory(cin, cpin, rin ,zin, depths, depth_ranges, environment.bottom_angle, x_eval)
+
     ## calculate sound speed at source location
     c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
 
     # initial ray variables, time=0
-    y0 = np.array([0, source_depth, np.sin(np.radians(launch_angle))/c])
+    y0s = [np.array([0, source_depth, np.sin(np.radians(launch_angle))/c]) for launch_angle in launch_angles]
 
-    ray, n_bott, n_surf = shoot_single_ray(
-        source_range,
-        y0,
-        reciever_range,
-        cin,
-        cpin,
-        rin,
-        zin,
-        depths,
-        depth_ranges,
-        environment.bottom_angle,
-        x_eval,
+    shoot_ray_part = partial(
+        shoot_single_ray,
+        source_range=source_range,
+        reciever_range=reciever_range,
+        array_metadata=array_metadata,
         rtol=rtol,
         terminate_backwards=terminal_backwards
     )
+    
+    with mp.Pool(n_processes) as pool:
+        results = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Processing rays"))
 
+    # close and unlink shared memory
+    for var in shms:
+        shms[var].unlink()
+        shms[var].close()
+
+    return results
     return ray, n_bott, n_surf
 
 def shoot_single_ray(
-        source_range : float,
         y0 : np.array,
+        source_range : float,
         reciever_range : float,
-        cin : np.array,
-        cpin : np.array,
-        rin : np.array,
-        zin : np.array,
-        depths : np.array,
-        depth_ranges : np.array,
-        bottom_angle : np.array,
-        x_eval : np.array,
+        array_metadata : dict,
         rtol = 1e-6,
         terminate_backwards : bool = True,
 ):
@@ -468,29 +474,15 @@ def shoot_single_ray(
 
     Parameters
     ----------
+    y0 : np.array (3,)
+        ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
     source_range : float
         initial ray, x position
-    y : np.array (3,)
-        ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
     reciever_range : float
         integration range end bound. starting point is x0
-    cin : np.array (m,n)
-        2D array of sound speed values
-    cpin : np.array (m,n)
-        2D array of dc/dz
-    rin : np.array (m,)
-        range coordinate for c arrays
-    zin : np.array (n,)
-        depth coordinate for c arrays
-    depths : np.array(m,)
-        array of depths (meters), should be 1D with shape (m,)
-    depth_ranges : np.array(m,)
-        array of depth ranges (meters), should be 1D with shape (m,)
-    bottom_angle : np.array (m,)
-        array of bottom angles (degrees), should be 1D with shape (m,) and values should align with depth_ranges coordinate.
-    x_eval : np.array
-        array of x values at which to evaluate the solution
-        (optional, if not provided, will use default t_eval for :func:`scipy.integrate.solve_ivp`)
+    array_metedata : dict
+        dictionary containing metadata of shared memory arrays specificing environment. Calculated with `pr._init_shared_memory()`.
+            cin, cpin, rin, zin, depths, depth_ranges, bottom_angle, x_eval
     rtol : float
         relative tolerance for the ODE solver, default is 1e-6
 
@@ -504,7 +496,19 @@ def shoot_single_ray(
         number of surface bounces
     """
 
-    # initialize parameters
+    # Access shared arrays
+    shared_arrays, existing_shms = _unpack_shared_memory(array_metadata)
+
+    cin = shared_arrays['cin']
+    cpin = shared_arrays['cpin']
+    rin = shared_arrays['rin']
+    zin = shared_arrays['zin']
+    depths = shared_arrays['depths']
+    depth_ranges = shared_arrays['depth_ranges']
+    bottom_angle = shared_arrays['bottom_angle']
+    x_eval = shared_arrays['x_eval']
+
+    # initialize loop parameters
     x_intermediate = source_range
     full_ray = np.concat((np.array([source_range]), y0)).copy()
     full_ray = np.expand_dims(full_ray, axis=1)
@@ -592,6 +596,10 @@ def shoot_single_ray(
         y_intermediate[2] = np.sin(np.radians(theta_bounce)) / c
         
         loop_count += 1
+
+    # unlink all shared arrays after process is done
+    for var in existing_shms:
+        existing_shms[var].close()
 
     return full_ray, n_bottom, n_surface
 

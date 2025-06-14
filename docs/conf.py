@@ -6,7 +6,7 @@ from typing import Any
 project = "pygenray"
 copyright = "2025, John Ragland"
 author = "John Ragland"
-version = release = importlib.metadata.version("package")
+version = release = importlib.metadata.version("pygenray")
 
 extensions = [
     "myst_parser",
@@ -54,6 +54,7 @@ myst_enable_extensions = [
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
+    "scipy": ("https://docs.scipy.org/doc/scipy/", None),
 }
 
 nitpick_ignore = [

@@ -3,7 +3,7 @@ experimenting with implementing things in jax
 """
 import jax
 import jax.numpy as jnp
-import pyigenray as pr
+import pygenray as pr
 
 @jax.jit
 def bilinear_interp_jx(r, z, cin, rin, zin):

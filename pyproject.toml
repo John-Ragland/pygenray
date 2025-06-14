@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pyigenray"
+name = "pygenray"
 dynamic = ["version"]
 description = ''
 readme = "README.md"
@@ -39,31 +39,31 @@ docs = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/John Ragland/pyigenray#readme"
-Issues = "https://github.com/John Ragland/pyigenray/issues"
-Source = "https://github.com/John Ragland/pyigenray"
+Documentation = "https://github.com/John Ragland/pygenray#readme"
+Issues = "https://github.com/John Ragland/pygenray/issues"
+Source = "https://github.com/John Ragland/pygenray"
 
 [tool.hatch.version]
-path = "src/pyigenray/__about__.py"
+path = "src/pygenray/__about__.py"
 
 [tool.hatch.envs.types]
 extra-dependencies = [
   "mypy>=1.0.0",
 ]
 [tool.hatch.envs.types.scripts]
-check = "mypy --install-types --non-interactive {args:src/pyigenray tests}"
+check = "mypy --install-types --non-interactive {args:src/pygenray tests}"
 
 [tool.coverage.run]
-source_pkgs = ["pyigenray", "tests"]
+source_pkgs = ["pygenray", "tests"]
 branch = true
 parallel = true
 omit = [
-  "src/pyigenray/__about__.py",
+  "src/pygenray/__about__.py",
 ]
 
 [tool.coverage.paths]
-pyigenray = ["src/pyigenray", "*/pyigenray/src/pyigenray"]
-tests = ["tests", "*/pyigenray/tests"]
+pygenray = ["src/pygenray", "*/pygenray/src/pygenray"]
+tests = ["tests", "*/pygenray/tests"]
 
 [tool.coverage.report]
 exclude_lines = [

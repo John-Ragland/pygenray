@@ -1,5 +1,5 @@
 import time
-import pyigenray as pr
+import pygenray as pr
 
 def toy_process(idx : int, array_metadata : dict):
     shared_arrays, existing_shms = pr._unpack_shared_memory(shared_array_metadata=array_metadata)
