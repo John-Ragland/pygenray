@@ -275,6 +275,23 @@ def surface_bounce_sp(x,y,cin, cpin, rin, zin, depths, depth_ranges):
     ray_depth = y[1]
     return ray_depth 
 
+@numba.njit(fastmath=True, cache=True)
+def ray_bounding_box_event(x,y,cin, cpin, rin, zin, depths, depth_ranges):
+    '''
+    Ray Bounding Box Event - trigger when ray position goes outside of bounding box. Bounding box is defined as the box where sound speed is defined.
+
+    Returns
+    -------
+    bbox : bool
+        True if ray is outside bounding box, False otherwise
+    '''
+
+    z = y[1]
+
+    bbox = (z > zin[-1]) | (z < zin[0]) | (x < rin[0]) | (x > rin[-1])
+    if bbox:
+        print('bbox event triggered', z, zin[-1], zin[0], x, rin[0], rin[-1])
+    return bbox
 
 def shoot_ray_segment(
         x0 : float,
@@ -287,6 +304,8 @@ def shoot_ray_segment(
         depths : np.array,
         depth_ranges : np.array,
         x_eval : np.array = None,
+        rtol = 1e-6,
+        terminate_backwards : bool = True
 ):
     """
     Given an initial condition vector and initial range, integrate ray
@@ -315,6 +334,10 @@ def shoot_ray_segment(
     x_eval : np.array
         array of x values at which to evaluate the solution
         (optional, if not provided, will use default t_eval for :func:`scipy.integrate.solve_ivp`)
+    rtol : float
+        relative tolerance for the ODE solver, default is 1e-6
+    terminate_backwards : bool
+        whether to terminate ray integration when ray starts propagating backwards. Default is True
     """
 
     # set up surface and bottom bounce events
@@ -326,20 +349,22 @@ def shoot_ray_segment(
     bottom_event.terminal = True
     #bottom_event.direction = 0
 
+    events = (
+        surface_event,
+        bottom_event,
+    )
+    
     sol = scipy.integrate.solve_ivp(
         derivsrd_sp,
         (x0,reciever_range),
         y0,
         args = (cin, cpin, rin*1000, zin, depths, depth_ranges),
         t_eval=x_eval,
-        events = (
-            surface_event,
-            bottom_event
-        )
+        events = events,
+        rtol = rtol
     )
 
     return sol
-
 
 def shoot_ray(
         source_depth : np.array,
@@ -347,7 +372,9 @@ def shoot_ray(
         launch_angle : np.array,
         reciever_range : float,
         x_eval : np.array,
-        environment : oaenv.environment.OceanEnvironment2D
+        environment : oaenv.environment.OceanEnvironment2D,
+        rtol = 1e-6,
+        terminal_backwards : bool = True
 ):
     '''
     given arrays of source depth, range, and launch angle, integrate ray to reciever range. For depth (m,), range (n,), and angle (k,), number of ray runs will be m*n*k.
@@ -366,6 +393,17 @@ def shoot_ray(
         The range values to save the ray state at.s
     environment : pr.environment.OceanEnvironment
         OceanEnvironment object specifying sound speed and bathymetry.
+    rtol : float
+        relative tolerance for the ODE solver, default is 1e-6
+
+    Returns
+    -------
+    ray : np.array
+        2D array of ray state at each x_eval point, shape (4, n_eval), where n_eval is the number of evaluation points
+    n_bott : int
+        number of bottom bounces
+    n_surf : int
+        number of surface bounces
     '''
     # set up initial conditions for ray variable
 
@@ -376,6 +414,14 @@ def shoot_ray(
     zin = np.array(environment.sound_speed.depth.values)
     depths = np.array(environment.bathymetry.values)
     depth_ranges = np.array(environment.bathymetry.range.values)
+    
+    # check that coordinates are monotonically increasing
+    if not (np.all(np.diff(rin) >= 0)):
+        raise Exception('Sound speed range coordinates must be monotonically increasing.')
+    if not (np.all(np.diff(zin) >= 0)):
+        raise Exception('Sound speed depth coordinates must be monotonically increasing.')
+    if not (np.all(np.diff(depth_ranges) >= 0)):
+        raise Exception('Bathymetry range coordinates must be monotonically increasing.')
     
     ## calculate sound speed at source location
     c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
@@ -394,11 +440,12 @@ def shoot_ray(
         depths,
         depth_ranges,
         environment.bottom_angle,
-        x_eval
+        x_eval,
+        rtol=rtol,
+        terminate_backwards=terminal_backwards
     )
 
     return ray, n_bott, n_surf
-
 
 def shoot_single_ray(
         source_range : float,
@@ -412,6 +459,8 @@ def shoot_single_ray(
         depth_ranges : np.array,
         bottom_angle : np.array,
         x_eval : np.array,
+        rtol = 1e-6,
+        terminate_backwards : bool = True,
 ):
     """
     Given an initial condition vector and initial range, integrate ray
@@ -419,7 +468,7 @@ def shoot_single_ray(
 
     Parameters
     ----------
-    x0 : float
+    source_range : float
         initial ray, x position
     y : np.array (3,)
         ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
@@ -442,6 +491,8 @@ def shoot_single_ray(
     x_eval : np.array
         array of x values at which to evaluate the solution
         (optional, if not provided, will use default t_eval for :func:`scipy.integrate.solve_ivp`)
+    rtol : float
+        relative tolerance for the ODE solver, default is 1e-6
 
     Returns
     -------
@@ -455,7 +506,8 @@ def shoot_single_ray(
 
     # initialize parameters
     x_intermediate = source_range
-    full_ray = np.empty((4, 1))  
+    full_ray = np.concat((np.array([source_range]), y0)).copy()
+    full_ray = np.expand_dims(full_ray, axis=1)
     sols = []
     n_surface = 0
     n_bottom = 0
@@ -485,7 +537,9 @@ def shoot_single_ray(
             zin,
             depths,
             depth_ranges,
-            x_eval_filtered
+            x_eval_filtered,
+            rtol=rtol,
+            terminate_backwards=terminate_backwards
         )
 
         sols.append(sol)
@@ -495,20 +549,16 @@ def shoot_single_ray(
         if sol.message == 'The solver successfully reached the end of the integration interval.':
             break
 
-        try:
-            y_intermediate = sol.y[:,-1]
-        except:
-            # TODO make this better
-            print('error in bounce')
-            return sols
+        y_intermediate = sol.y[:,-1]
 
-        # Check if an event occurred and update x_intermediate accordingly
+        # Check if bounce event occurred and update x_intermediate accordingly
         if len(sol.t_events[0]) > 0 or len(sol.t_events[1]) > 0:
             # An event occurred, use the event time as the new range
             if len(sol.t_events[0]) > 0:  # Surface event
                 x_intermediate = sol.t_events[0][0]
             elif len(sol.t_events[1]) > 0:  # Bottom event  
                 x_intermediate = sol.t_events[1][0]
+
         else:
             # No event, use the final integration point
             x_intermediate = sol.t[-1]
@@ -527,9 +577,16 @@ def shoot_single_ray(
             theta_bounce = -theta + 2*beta
             n_bottom += 1
             # TODO double check bottom reflection angle
-        else:
-            # TODO add event handling for errors
-            pass
+
+        #else: # no bounce event, but also not end of integration
+        #    loop_count += 1
+        #    continue
+        #    # TODO add event handling for errors
+        
+        # terminate if ray bounces backwards
+        if terminate_backwards and (np.abs(theta_bounce) > 90):
+            print('ray bounced backwards, terminating integration')
+            return None,None,None
         
         # update ray angle
         y_intermediate[2] = np.sin(np.radians(theta_bounce)) / c
@@ -537,7 +594,6 @@ def shoot_single_ray(
         loop_count += 1
 
     return full_ray, n_bottom, n_surface
-
 
 def _init_shared_memory(
         cin,
@@ -631,8 +687,10 @@ def _unpack_shared_memory(shared_array_metadata):
 
     Returns
     -------
-    dict
+    shared_arrays : dict
         Dictionary containing unpacked shared memory arrays
+    existing_shms : dict
+        Dictionary containing existing shared memory objects
     """
     shared_array_names = [
         'cin','cpin','rin','zin','depths','depth_ranges','bottom_angle','x_eval'
@@ -686,4 +744,4 @@ def _ray_angle(
     return theta,c
 
 __all__ = ['bilinear_interp', 'linear_interp', 'derivsrd_sp',
-           'bottom_bounce_sp', 'surface_bounce_sp', 'shoot_ray_segment', 'shoot_ray', 'shoot_single_ray', '_unpack_shared_memory']
+           'bottom_bounce_sp', 'surface_bounce_sp', 'shoot_ray_segment', 'shoot_ray', 'shoot_single_ray', '_init_shared_memory', '_unpack_shared_memory']
