@@ -6,3 +6,4 @@ from .launch_rays import *
 from .integration_processes import *
 from .multi_processing import *
 from .eigenrays import *
+from .ray_objects import *

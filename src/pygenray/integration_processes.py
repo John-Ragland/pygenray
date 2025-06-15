@@ -1,5 +1,22 @@
 """
-Ray equations and the methods needed to solve them.
+Ray equations and the methods needed to solve them. These functions are the primary bottle neck for the numerical integration and are optimized for speed using Numba just in time compilation. The ray equations are derived from the Hamiltonian formulation for ray theory [Colosi2016]_.
+
+.. math::
+    y = \\left [ t, z, p \\right ]^T
+
+where :math:`t` is the travel time, :math:`z` is the depth, and :math:`p` is the ray parameter :math:`(\\frac{sin(\\theta)}{c})`, and range, :math:`x` is the independant variable.
+
+.. math :: \\frac{dT}{dx} = \\frac{1}{c\\sqrt{1-c^2 \\ p_z^2}} \\\\
+    :label: ray1
+.. math :: \\frac{dz}{dx} = \\frac{c \\ p_z}{ \\sqrt{1-c^2 \\ p_z^2}} \\\\
+    :label: ray2
+.. math :: \\frac{dp_z}{dx} = -\\frac{1}{c^2}\\frac{1}{\\sqrt{1-c^2 \\ p_z^2}}\\frac{\\partial c}{\\partial z} \\\\
+    :label: ray3
+
+References
+----------
+.. [Colosi2016] Colosi, J. A. (2016). Sound Propagation through the Stochastic Ocean, Cambridge University Press, 443 pages.
+
 """
 import numba
 import numpy as np
@@ -350,3 +367,4 @@ __all__ = [
     'bilinear_interp',
     'linear_interp',
 ]
+

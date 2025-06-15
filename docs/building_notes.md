@@ -36,3 +36,6 @@ actually... scipy might be worth it. Because I can have the ray code done in jus
     - find linear zero crossing launch angle
     - launch that ray
     - use launched ray and previous bracketing rays and repeat until convergence
+
+
+**where I left off**: I have built out `shoot_rays` and `shoot_ray`, and created a single method that can be called from within the functions that take an environment as input, and when accessing shared memory. But I haven't tested all of that functionality yet.

@@ -17,21 +17,21 @@ def shoot_rays(
         x_eval : np.array,
         environment : oaenv.environment.OceanEnvironment2D,
         rtol = 1e-6,
-        terminal_backwards : bool = True,
+        terminate_backwards : bool = True,
         n_processes : int = None,
         debug : bool = True
 ):
     '''
-    Simulate rays for given environment and launch angles.
+    Integrate rays for given environment and launch angles. Different launch angle initial conditions are mapped to available CPUS.
 
     Parameters
     ----------
     source_depth : np.array
-        array of source depths (meters), should be 1D with shape (m,)
+        array of source depths (meters)
     source_range : np.array
-        array of source ranges (meters), should be 1D with shape (n,)
-    launch_angle : np.array
-        array of source angles (degrees), should be 1D with shape (k,)
+        array of source ranges (meters)
+    launch_angles : np.array
+        array of source angles (degrees)
     reciever_range : float
         reciever range (meters)
     x_eval : np.array
@@ -62,12 +62,7 @@ def shoot_rays(
     # set up initial conditions for ray variable
 
     ## unpack environment object
-    cin = np.array(environment.sound_speed.values)
-    cpin = np.array(environment.sound_speed.differentiate('depth').values)
-    rin = np.array(environment.sound_speed.range.values)
-    zin = np.array(environment.sound_speed.depth.values)
-    depths = np.array(environment.bathymetry.values)
-    depth_ranges = np.array(environment.bathymetry.range.values)
+    cin, cpin, rin, zin, depths, depth_ranges, bottom_angles = unpack_envi(environment)
     
     # check that coordinates are monotonically increasing
     if not (np.all(np.diff(rin) >= 0)):
@@ -76,85 +71,185 @@ def shoot_rays(
         raise Exception('Sound speed depth coordinates must be monotonically increasing.')
     if not (np.all(np.diff(depth_ranges) >= 0)):
         raise Exception('Bathymetry range coordinates must be monotonically increasing.')
-    
-    # Create Shared Arrays
-    array_metadata, shms = pr._init_shared_memory(cin, cpin, rin ,zin, depths, depth_ranges, environment.bottom_angle, x_eval)
 
-    ## calculate sound speed at source location
-    c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
+    # Use multiprocessing if number of rays is high enough
+    # TODO set threshold to accurately reflect overhead trade off
+    if len(launch_angles) < 70:
+        rays_ls = []
+        for idx, launch_angle in enumerate(tqdm(launch_angles)):
+            rays_ls.append(
+                shoot_ray(
+                    source_depth,
+                    source_range,
+                    launch_angle,
+                    reciever_range,
+                    x_eval,
+                    environment,
+                    rtol=rtol,
+                    terminate_backwards=terminate_backwards,
+                    debug=debug
+                )
+            )
+            rays_ls[idx].launch_angle = launch_angle
+            rays_ls[idx].source_depth = source_depth
 
-    # initial ray variables, time=0
-    y0s = [np.array([0, source_depth, np.sin(np.radians(launch_angle))/c]) for launch_angle in launch_angles]
+        rays = pr.RayFan(rays_ls)
+        return rays
+    else: # Use multiprocessing
+        # Create Shared Arrays
+        array_metadata, shms = pr._init_shared_memory(cin, cpin, rin ,zin, depths, depth_ranges, bottom_angles, x_eval)
 
-    shoot_ray_part = partial(
-        _shoot_single_ray_process,
-        source_range=source_range,
-        reciever_range=reciever_range,
-        array_metadata=array_metadata,
-        rtol=rtol,
-        terminate_backwards=terminal_backwards
-    )
-    
-    with mp.Pool(n_processes) as pool:
-        results = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Processing rays"))
+        # calculate initial ray parameter
+        c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
+        y0s = [np.array([0, source_depth, np.sin(np.radians(launch_angle))/c]) for launch_angle in launch_angles]
 
-    # close and unlink shared memory
-    for var in shms:
-        shms[var].unlink()
-        shms[var].close()
+        shoot_ray_part = partial(
+            _shoot_single_ray_process,
+            source_range=source_range,
+            source_depth=source_depth,
+            reciever_range=reciever_range,
+            array_metadata=array_metadata,
+            rtol=rtol,
+            terminate_backwards=terminate_backwards
+        )
+        
+        with mp.Pool(n_processes) as pool:
+            rays_list = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Processing rays"))
 
-    return results
-    return ray, n_bott, n_surf
+        # assign launch angles and source depths to ray objects
+        for ridx, ray in enumerate(rays_list):
+            ray.launch_angle = launch_angles[ridx]
+            ray.source_depth = source_depth
+        
+        ray_fan = pr.RayFan(rays_list)
 
-def _shoot_single_ray_process(
-        y0 : np.array,
-        source_range : float,
-        reciever_range : float,
-        array_metadata : dict,
-        rtol = 1e-6,
-        terminate_backwards : bool = True,
-        debug : bool = False
+        # close and unlink shared memory
+        for var in shms:
+            shms[var].unlink()
+            shms[var].close()
+
+        return ray_fan
+
+def shoot_ray(
+    source_depth : float,
+    source_range : float,
+    launch_angle : float,
+    reciever_range : float,
+    x_eval : np.array,
+    environment : oaenv.environment.OceanEnvironment2D,
+    rtol = 1e-6,
+    terminate_backwards : bool = True,
+    debug : bool = True
 ):
     """
-    Shoot a single ray, accessing shared memory for environment data.
+    Integrate rays for given environment and launch angles. Different launch angle initial conditions are mapped to available CPUS.
+    
+    Parameters
+    ----------
+    source_depth : float
+        array of source depths (meters)
+    source_range : float
+        array of source ranges (meters)
+    launch_angle : np.array
+        array of source angles (degrees), should be 1D with shape (k,)
+    reciever_range : float
+        reciever range (meters)
+    x_eval : np.array
+        The range values to save the ray state at.s
+    environment : pr.environment.OceanEnvironment
+        OceanEnvironment object specifying sound speed and bathymetry.
+    rtol : float
+        relative tolerance for the ODE solver, default is 1e-6
+    terminate_backwards : bool
+        whether to terminate ray if it bounces backwards)
+    debug : bool
+        whether to print debug information, default is False
+
+    """
+    cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles = unpack_envi(environment)
+
+    # check that coordinates are monotonically increasing
+    if not (np.all(np.diff(rin) >= 0)):
+        raise Exception('Sound speed range coordinates must be monotonically increasing.')
+    if not (np.all(np.diff(zin) >= 0)):
+        raise Exception('Sound speed depth coordinates must be monotonically increasing.')
+    if not (np.all(np.diff(depth_ranges) >= 0)):
+        raise Exception('Bathymetry range coordinates must be monotonically increasing.')
+    
+    # calculate y0
+    c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
+    y0 = np.array([0, source_depth, np.sin(np.radians(launch_angle))/c])
+
+    # launch ray at angle theta
+    ray = _shoot_ray_array(
+        y0, source_depth, source_range, reciever_range, x_eval, cin, cpin, rin, zin, depths, depth_ranges, bottom_angles, rtol, terminate_backwards,debug
+    )
+
+    # assign launch angle to ray object
+    ray.launch_angle = launch_angle
+    ray.source_depth = source_depth
+
+    return ray
+
+def _shoot_ray_array(
+    y0 : np.array,
+    source_depth : float,
+    source_range : float,
+    reciever_range : float,
+    x_eval : np.array,
+    cin : np.array,
+    cpin : np.array,
+    rin : np.array,
+    zin : np.array,
+    depths : np.array,
+    depth_ranges : np.array,
+    bottom_angles : np.array,
+    rtol = 1e-6,
+    terminate_backwards : bool = True,
+    debug : bool = True,
+):
+    """
+    Integrate single ray. Integration is terminated at bottom and surface reflections, and reflection angle is calculated and updated. Integration is looped until ray reaches reciever range. If there is an error in the integration, the function returns None, None, None.
+    
+    Environment specified by numpy arrays that are returned by {mod}`pr.unpack_envi()`.
 
     Parameters
     ----------
     y0 : np.array (3,)
-        ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
-    source_range : float
-        initial ray, x position
+        initial ray vector values [travel time, depth, ray parameter (sin(θ)/c)].
+    source_depth : float
+        array of source depths (meters), should be 1D with shape (m,)
+    source_range : np.array
+        array of source ranges (meters), should be 1D with shape (n,)
     reciever_range : float
-        integration range end bound. starting point is x0
-    array_metedata : dict
-        dictionary containing metadata of shared memory arrays specificing environment. Calculated with `pr._init_shared_memory()`.
-            cin, cpin, rin, zin, depths, depth_ranges, bottom_angle, x_eval
+        reciever range (meters)
+    launch_angle : float
+        launch angle of ray (degrees)
+    x_eval : np.array
+        The range values to save the ray state at.s
+    cin : np.array (m,n)
+        2D array of sound speed values
+    cpin : np.array (m,n)
+        2D array of dc/dz
+    rin : np.array (m,)
+        range coordinate for c arrays
+    zin : np.array (n,)
+        depth coordinate for c arrays
+    depths : np.array(m,)
+        array of depths (meters), should be 1D with shape (m,)
+    depth_ranges : np.array(m,)
+        array of depth ranges (meters), should be 1D with shape (m,)
+    bottom_angles : np.array(m,)
+        array of bottom angles (degrees), should be 1D with shape and correspond to range bins `depth_ranges`
+    environment : pr.environment.OceanEnvironment
+        OceanEnvironment object specifying sound speed and bathymetry.
     rtol : float
         relative tolerance for the ODE solver, default is 1e-6
+    terminate_backwards : bool
+        whether to terminate ray if it bounces backwards
     debug : bool
         whether to print debug information, default is False
-
-    Returns
-    -------
-    full_ray : np.array
-        2D array of ray state at each x_eval point, shape (4, n_eval), where n_eval is the number of evaluation points
-    n_bottom : int
-        number of bottom bounces
-    n_surface : int
-        number of surface bounces
     """
-
-    # Access shared arrays
-    shared_arrays, existing_shms = pr._unpack_shared_memory(array_metadata)
-
-    cin = shared_arrays['cin']
-    cpin = shared_arrays['cpin']
-    rin = shared_arrays['rin']
-    zin = shared_arrays['zin']
-    depths = shared_arrays['depths']
-    depth_ranges = shared_arrays['depth_ranges']
-    bottom_angle = shared_arrays['bottom_angle']
-    x_eval = shared_arrays['x_eval']
 
     # initialize loop parameters
     x_intermediate = source_range
@@ -168,7 +263,7 @@ def _shoot_single_ray_process(
     # create cubic interpolation of bottom slope
     bottom_angle_interp = scipy.interpolate.interp1d(
         depth_ranges,
-        bottom_angle,
+        bottom_angles,
         kind='cubic'
     )
 
@@ -232,11 +327,6 @@ def _shoot_single_ray_process(
             theta_bounce = -theta + 2*beta
             n_bottom += 1
             # TODO double check bottom reflection angle
-
-        #else: # no bounce event, but also not end of integration
-        #    loop_count += 1
-        #    continue
-        #    # TODO add event handling for errors
         
         # terminate if ray bounces backwards
         if terminate_backwards and (np.abs(theta_bounce) > 90):
@@ -249,11 +339,92 @@ def _shoot_single_ray_process(
         
         loop_count += 1
 
+    # construct Ray object
+
+    ray = pr.Ray(
+        full_ray[0,:],
+        full_ray[1:,:],
+        n_bottom,
+        n_surface,
+    )
+    
+    return ray
+
+def _shoot_single_ray_process(
+        y0 : np.array,
+        source_range : float,
+        source_depth : float,
+        reciever_range : float,
+        array_metadata : dict,
+        rtol = 1e-6,
+        terminate_backwards : bool = True,
+        debug : bool = False
+):
+    """
+    Shoot a single ray, accessing shared memory for environment data.
+    This is an internal function for multiprocessing handling.
+
+    Parameters
+    ----------
+    y0 : np.array (3,)
+        ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
+    source_range : float
+        initial ray, x position
+    reciever_range : float
+        integration range end bound. starting point is x0
+    array_metedata : dict
+        dictionary containing metadata of shared memory arrays specificing environment. Calculated with `pr._init_shared_memory()`.
+            cin, cpin, rin, zin, depths, depth_ranges, bottom_angle, x_eval
+    rtol : float
+        relative tolerance for the ODE solver, default is 1e-6
+    debug : bool
+        whether to print debug information, default is False
+
+    Returns
+    -------
+    full_ray : np.array
+        2D array of ray state at each x_eval point, shape (4, n_eval), where n_eval is the number of evaluation points
+    n_bottom : int
+        number of bottom bounces
+    n_surface : int
+        number of surface bounces
+    """
+
+    # Access shared arrays
+    shared_arrays, existing_shms = pr._unpack_shared_memory(array_metadata)
+
+    cin = shared_arrays['cin']
+    cpin = shared_arrays['cpin']
+    rin = shared_arrays['rin']
+    zin = shared_arrays['zin']
+    depths = shared_arrays['depths']
+    depth_ranges = shared_arrays['depth_ranges']
+    bottom_angles = shared_arrays['bottom_angle']
+    x_eval = shared_arrays['x_eval']
+
+    ray = _shoot_ray_array(
+        y0,
+        source_depth,
+        source_range,
+        reciever_range,
+        x_eval,
+        cin,
+        cpin,
+        rin,
+        zin,
+        depths,
+        depth_ranges,
+        bottom_angles,
+        rtol,
+        terminate_backwards,
+        debug,
+    )
+    
     # unlink all shared arrays after process is done
     for var in existing_shms:
         existing_shms[var].close()
 
-    return full_ray, n_bottom, n_surface
+    return ray
 
 def _shoot_ray_segment(
         x0 : float,
@@ -335,7 +506,8 @@ def unpack_envi(environment):
     zin = np.array(environment.sound_speed.depth.values)
     depths = np.array(environment.bathymetry.values)
     depth_ranges = np.array(environment.bathymetry.range.values)
+    bottom_angles = np.array(environment.bottom_angle)
 
-    return cin, cpin, rin, zin ,depths, depth_ranges
+    return cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles
 
-__all__ = ['_shoot_ray_segment', 'shoot_rays', '_shoot_single_ray_process', 'unpack_envi']
+__all__ = ['_shoot_ray_segment', 'shoot_rays', 'shoot_ray','_shoot_single_ray_process', 'unpack_envi']
