@@ -30,6 +30,12 @@ def _init_shared_memory(
     bottom_angle : np.array (k,)
         array of bottom angles (degrees), should be 1D with shape (k,) and values should align with depth_ranges coordinate.
 
+    Returns
+    -------
+    array_metadata : dict
+        Dictionary containing metadata of shared memory arrays
+    shms : dict
+        Dictionary containing shared memory objects for each array
     '''
     shared_array_names = [
         'cin','cpin','rin','zin','depths','depth_ranges','bottom_angle','x_eval'

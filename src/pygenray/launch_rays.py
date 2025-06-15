@@ -19,6 +19,7 @@ def shoot_rays(
         rtol = 1e-6,
         terminal_backwards : bool = True,
         n_processes : int = None,
+        debug : bool = True
 ):
     '''
     Simulate rays for given environment and launch angles.
@@ -43,6 +44,8 @@ def shoot_rays(
         whether to terminate ray if it bounces backwards
     n_processes : int
         number of processes to use, Default of None (mp.cpu_count)
+    debug : bool
+        whether to print debug information, default is False
 
     Returns
     -------
@@ -84,7 +87,7 @@ def shoot_rays(
     y0s = [np.array([0, source_depth, np.sin(np.radians(launch_angle))/c]) for launch_angle in launch_angles]
 
     shoot_ray_part = partial(
-        _shoot_single_ray,
+        _shoot_single_ray_process,
         source_range=source_range,
         reciever_range=reciever_range,
         array_metadata=array_metadata,
@@ -103,17 +106,17 @@ def shoot_rays(
     return results
     return ray, n_bott, n_surf
 
-def _shoot_single_ray(
+def _shoot_single_ray_process(
         y0 : np.array,
         source_range : float,
         reciever_range : float,
         array_metadata : dict,
         rtol = 1e-6,
         terminate_backwards : bool = True,
+        debug : bool = False
 ):
     """
-    Given an initial condition vector and initial range, integrate ray
-    until integration bounds or event is triggered.
+    Shoot a single ray, accessing shared memory for environment data.
 
     Parameters
     ----------
@@ -128,6 +131,8 @@ def _shoot_single_ray(
             cin, cpin, rin, zin, depths, depth_ranges, bottom_angle, x_eval
     rtol : float
         relative tolerance for the ODE solver, default is 1e-6
+    debug : bool
+        whether to print debug information, default is False
 
     Returns
     -------
@@ -186,29 +191,15 @@ def _shoot_single_ray(
             depth_ranges,
             x_eval_filtered,
             rtol=rtol,
-            terminate_backwards=terminate_backwards
         )
 
-        # Check if integration was successful
-        if not sol.success:
-            print(f'Integration failed: {sol.message}')
-            return None, None, None
-            
-        # Check dimensions before appending
-        if sol.y.shape[0] != 3:
-            print(f'Unexpected sol.y shape: {sol.y.shape}, expected (3, n)')
-            return None, None, None
-            
-        if len(sol.t) != sol.y.shape[1]:
-            print(f'Dimension mismatch: sol.t length {len(sol.t)}, sol.y shape {sol.y.shape}')
-            return None, None, None
-
-        sols.append(sol)
-        
-        # Only append if we have valid data
-        if len(sol.t) > 0:
+        try:
+            sols.append(sol)
             full_ray = np.append(full_ray, np.vstack((sol.t, sol.y)), axis=1)
-
+        except ValueError as e:
+            if debug:
+                print(f"Error appending ray segment: solution: {e}")
+            return None, None, None
         # if end of integration is reached, end loop
         if sol.message == 'The solver successfully reached the end of the integration interval.':
             break
@@ -249,7 +240,8 @@ def _shoot_single_ray(
         
         # terminate if ray bounces backwards
         if terminate_backwards and (np.abs(theta_bounce) > 90):
-            print('ray bounced backwards, terminating integration')
+            if debug:
+                print('ray bounced backwards, terminating integration')
             return None,None,None
         
         # update ray angle
@@ -275,7 +267,7 @@ def _shoot_ray_segment(
         depth_ranges : np.array,
         x_eval : np.array = None,
         rtol = 1e-6,
-        terminate_backwards : bool = True
+        debug : bool = False
 ):
     """
     Given an initial condition vector and initial range, integrate ray
@@ -306,8 +298,8 @@ def _shoot_ray_segment(
         (optional, if not provided, will use default t_eval for :func:`scipy.integrate.solve_ivp`)
     rtol : float
         relative tolerance for the ODE solver, default is 1e-6
-    terminate_backwards : bool
-        whether to terminate ray integration when ray starts propagating backwards. Default is True
+    debug : bool
+        whether to print debug information, default is False
     """
 
     # set up surface and bottom bounce events
@@ -336,6 +328,14 @@ def _shoot_ray_segment(
 
     return sol
 
+def unpack_envi(environment):
+    cin = np.array(environment.sound_speed.values)
+    cpin = np.array(environment.sound_speed.differentiate('depth').values)
+    rin = np.array(environment.sound_speed.range.values)
+    zin = np.array(environment.sound_speed.depth.values)
+    depths = np.array(environment.bathymetry.values)
+    depth_ranges = np.array(environment.bathymetry.range.values)
 
+    return cin, cpin, rin, zin ,depths, depth_ranges
 
-__all__ = ['_shoot_ray_segment', 'shoot_rays', '_shoot_single_ray']
+__all__ = ['_shoot_ray_segment', 'shoot_rays', '_shoot_single_ray_process', 'unpack_envi']

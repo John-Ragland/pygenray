@@ -17,3 +17,22 @@
 
 ### ... or scipy?
 actually... scipy might be worth it. Because I can have the ray code done in just a few days. I could still get the benefit of parelizing across cpu cores (which fits better into my current understanding of how to accelerate, compared to GPUs). I would get something working, and then could always go back and play around with adding jax support, which probably wouldn't be *that* hard. There's still a lot of optimization to be had with regular ole numba. And then I can use scipy.ode which is battle tested instead of diffrax.
+
+
+## Scipy Build
+**To Do**
+- [ ] verify that bottom reflection angles are correct
+- [x] understand the root finding for eigen rays
+- [ ] implement eigen ray calculation
+- [ ] Build reasonable error handling
+- [ ] Build ray object that makes sense
+
+
+### eigen-ray road map
+- shoot ray fan, save as *ray object*
+- for a given receiver depth, find all bracketing ray angles
+    - i.e. plot ray depth vs ray launch angle and find every depth crossing
+- do root finding using bisection method
+    - find linear zero crossing launch angle
+    - launch that ray
+    - use launched ray and previous bracketing rays and repeat until convergence
