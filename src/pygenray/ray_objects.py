@@ -43,6 +43,16 @@ class Ray:
             self.source_depth = source_depth
         return
 
+    def plot(self,):
+        """
+        Plot ray in time-depth space
+        """
+        plt.plot(self.r, self.z, c='k', lw=1, alpha=0.5)
+        plt.xlabel('time [s]')
+        plt.ylabel('depth [m]')
+        plt.ylim([self.z.max(), self.z.min()])
+        return
+
 class RayFan:
     """
     RayFan Object - python object that store all parameters associated with a ray fan.
@@ -132,12 +142,21 @@ class RayFan:
         plt.ylabel('depth [m]')
         plt.title('Time Front')
     
-    def plot_ray_fan(self,):
+    def plot_ray_fan(self,**kwargs):
         '''
         plot ray fan
         '''
 
-        _ = plt.plot(self.rs.T, self.zs.T, c='k', lw=1, alpha=10*1/len(self.thetas))
+        # set alpha value
+        if (10*1/len(self.thetas) > 1) | (10*1/len(self.thetas) < 0):
+            alpha_val=1
+        else:
+            alpha_val = 10*1/len(self.thetas)
+
+        plot_kwargs = {'c':'k', 'lw': 1, 'alpha': alpha_val}
+        plot_kwargs.update(kwargs)
+        _ = plt.plot(self.rs.T, self.zs.T, **plot_kwargs)
+
         plt.xlabel('range [m]')
         plt.ylabel('depth [m]')
         plt.ylim([self.zs.max(), self.zs.min()])
@@ -145,10 +164,130 @@ class RayFan:
 
         return
     
-    def plot_depth_v_angle(self,):
-        plt.scatter(x=self.thetas, y=self.zs[:,-1], s=2, c='k', lw=0)
+    def plot_depth_v_angle(self,include_line=False, **kwargs):
+
+        scatter_kwargs = {'c': self.thetas, 'cmap': 'managua', 's': 2, 'lw': 0, 'zorder': 6}
+        scatter_kwargs.update(kwargs)
+        if include_line:
+            plt.plot(self.thetas, self.zs[:,-1], c='#aaaaaa', lw=0.5, zorder=5)
+        plt.scatter(x=self.thetas, y=self.zs[:,-1],**kwargs)
 
         return
     
+    def __add__(self, other):
+        """
+        Add two RayFan objects by concatenating along the launch angle dimension (M).
+        
+        Parameters
+        ----------
+        other : RayFan
+            Another RayFan object to add to this one
+            
+        Returns
+        -------
+        RayFan
+            New RayFan object with concatenated rays
+            
+        Raises
+        ------
+        TypeError
+            If other is not a RayFan object
+        ValueError
+            If the range arrays (rs) are not compatible
+        """
+        if not isinstance(other, RayFan):
+            raise TypeError("Can only add RayFan objects together")
+        
+        # Check if range arrays are compatible
+        if not np.array_equal(self.rs[0], other.rs[0]):
+            raise ValueError("Range arrays (rs) must be equivalent for concatenation")
+        
+        # Create combined Ray objects
+        combined_rays = []
+        
+        # Add rays from self
+        for i in range(len(self.thetas)):
+            ray = Ray(
+                r=self.rs[i],
+                y=np.array([self.ts[i], self.zs[i], self.ps[i]]),
+                n_bottom=self.n_botts[i],
+                n_surface=self.n_surfs[i],
+                launch_angle=self.thetas[i],
+                source_depth=self.source_depths[i]
+            )
+            combined_rays.append(ray)
+        
+        # Add rays from other
+        for i in range(len(other.thetas)):
+            ray = Ray(
+                r=other.rs[i],
+                y=np.array([other.ts[i], other.zs[i], other.ps[i]]),
+                n_bottom=other.n_botts[i],
+                n_surface=other.n_surfs[i],
+                launch_angle=other.thetas[i],
+                source_depth=other.source_depths[i]
+            )
+            combined_rays.append(ray)
+        
+        return RayFan(combined_rays)
+
+    def __len__(self):
+        """
+        Return the number of rays in the RayFan.
+        
+        Returns
+        -------
+        int
+            Number of rays (length of launch angle dimension M)
+        """
+        return len(self.thetas)
+
+    def __getitem__(self, key):
+        """
+        Slice the RayFan along the launch angle dimension (M).
+        
+        Parameters
+        ----------
+        key : int, slice, or array-like
+            Index or slice to select rays. Can be:
+            - int: single ray index
+            - slice: slice object (e.g., 0:10:2)
+            - array-like: boolean mask or integer indices
+            
+        Returns
+        -------
+        RayFan
+            New RayFan object with selected rays
+        """
+        # Create Ray objects for the selected indices
+        selected_rays = []
+        
+        # Handle the slicing to get the indices
+        if isinstance(key, (int, slice)):
+            # Use numpy's advanced indexing to handle slices
+            selected_indices = np.arange(len(self.thetas))[key]
+        else:
+            # Handle array-like indices (boolean masks or integer arrays)
+            selected_indices = np.asarray(key)
+            if selected_indices.dtype == bool:
+                selected_indices = np.where(selected_indices)[0]
+        
+        # Ensure selected_indices is iterable (convert single int to array)
+        if np.isscalar(selected_indices):
+            selected_indices = [selected_indices]
+        
+        # Create Ray objects for selected indices
+        for i in selected_indices:
+            ray = Ray(
+                r=self.rs[i],
+                y=np.array([self.ts[i], self.zs[i], self.ps[i]]),
+                n_bottom=self.n_botts[i],
+                n_surface=self.n_surfs[i],
+                launch_angle=self.thetas[i],
+                source_depth=self.source_depths[i]
+            )
+            selected_rays.append(ray)
+        
+        return RayFan(selected_rays)
 
 __all__ = ['Ray','RayFan']
