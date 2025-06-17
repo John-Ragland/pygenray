@@ -43,11 +43,14 @@ class Ray:
             self.source_depth = source_depth
         return
 
-    def plot(self,):
+    def plot(self,**kwargs):
         """
         Plot ray in time-depth space
         """
-        plt.plot(self.r, self.z, c='k', lw=1, alpha=0.5)
+
+        plot_kwargs = {'c':'k', 'lw': 1, 'alpha': 0.5}
+        plot_kwargs.update(kwargs)
+        plt.plot(self.r, self.z, **kwargs)
         plt.xlabel('time [s]')
         plt.ylabel('depth [m]')
         plt.ylim([self.z.max(), self.z.min()])

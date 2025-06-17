@@ -225,8 +225,11 @@ def linear_interp(x, xin, yin):
     return y_interp
 
 @numba.njit(fastmath=True, cache=True)
-def bottom_bounce(x,y,cin, cpin, rin, zin, depths, depth_ranges):
+def bottom_bounce_archive(x,y,cin, cpin, rin, zin, depths, depth_ranges):
     """
+    Bottom bounce event. Crosses zero at bottom reflection and is used to trigger end of ray integration segment, so that reflection can be handled.
+    A tolerance of 1 mm (where the ray event triggers 1mm below the bottom)
+
     Parameters
     ----------
     x : float
@@ -255,22 +258,22 @@ def bottom_bounce(x,y,cin, cpin, rin, zin, depths, depth_ranges):
     direction : np.array (2,)
         direction of the event, 1 for increasing, -1 for decreasing
     """
+    tol = 1e-2 # 1 cm
 
     water_depth = linear_interp(x, depth_ranges, depths)
     ray_depth = y[1]
 
-    # in original code, bottom bounce is enforced within 2 meters
-    # I'm removing this for now, which might cause numerical issues
-    #if np.abs(val2) < 2:
-    #    val2=0
-
     # crosses zero for bottom reflection
-    bottom_term = ray_depth-water_depth
+    bottom_distance = ray_depth-water_depth
 
-    return bottom_term  # bounce event at surface and bottom
+    # zero if within bottom tolerance
+    if np.abs(bottom_distance) < 2:
+        bottom_distance = 0
+
+    return bottom_distance 
 
 @numba.njit(fastmath=True, cache=True)
-def surface_bounce(x,y,cin, cpin, rin, zin, depths, depth_ranges):
+def surface_bounce_archive(x,y,cin, cpin, rin, zin, depths, depth_ranges):
     """
     Parameters
     ----------
@@ -300,8 +303,38 @@ def surface_bounce(x,y,cin, cpin, rin, zin, depths, depth_ranges):
     direction : np.array (2,)
         direction of the event, 1 for increasing, -1 for decreasing
     """
+    tol = 1e-2 # 1 cm
+    ray_depth = y[1] - tol
+    return ray_depth
+
+@numba.njit(fastmath=True, cache=True)
+def surface_bounce(x, y, cin, cpin, rin, zin, depths, depth_ranges):
+    """Surface event: only trigger when approaching surface from below"""
     ray_depth = y[1]
-    return ray_depth 
+
+    # calculate ray angle
+    ray_theta,c = ray_angle(x,y,cin, rin, zin)
+
+    # trigger event when ray crosses surface boundary and is traveling upwards
+    if (ray_depth < 0) and (ray_theta < 0):
+        return 1.0
+    else:
+        return -1.0
+
+@numba.njit(fastmath=True, cache=True)
+def bottom_bounce(x, y, cin, cpin, rin, zin, depths, depth_ranges):
+    """Bottom event: only trigger when approaching bottom from above"""
+    bottom_depth = linear_interp(x, depth_ranges, depths)
+    ray_depth = y[1]
+
+    # calculate ray angle
+    ray_theta, c = ray_angle(x,y,cin, rin, zin)
+
+    # trigger event when ray crosses boundary and is traveling downwards
+    if (ray_depth > bottom_depth) and (ray_theta > 0):
+        return 1.0
+    else:
+        return -1.0
 
 @numba.njit(fastmath=True, cache=True)
 def ray_bounding_box_event(x,y,cin, cpin, rin, zin, depths, depth_ranges):

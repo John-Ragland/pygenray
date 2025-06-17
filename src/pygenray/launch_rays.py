@@ -76,7 +76,7 @@ def shoot_rays(
     # TODO set threshold to accurately reflect overhead trade off
     if len(launch_angles) < 70:
         rays_ls = []
-        for idx, launch_angle in enumerate(tqdm(launch_angles)):
+        for launch_angle in tqdm(launch_angles):
             rays_ls.append(
                 shoot_ray(
                     source_depth,
@@ -90,10 +90,13 @@ def shoot_rays(
                     debug=debug
                 )
             )
-            rays_ls[idx].launch_angle = launch_angle
-            rays_ls[idx].source_depth = source_depth
+        # shoot_ray automatically saves launch angle to ray object
+        # launch angle doesn't need to be set manually here
 
-        rays = pr.RayFan(rays_ls)
+        # remove dropped rays
+        rays_ls_nonone = [ray for ray in rays_ls if ray is not None]
+        
+        rays = pr.RayFan(rays_ls_nonone)
         return rays
     else: # Use multiprocessing
         # Create Shared Arrays
@@ -114,13 +117,20 @@ def shoot_rays(
         )
         
         with mp.Pool(n_processes) as pool:
-            rays_list = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Processing rays"))
+            rays_ls = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Processing rays"))
 
-        # assign launch angles and source depths to ray objects
-        for ridx, ray in enumerate(rays_list):
-            ray.launch_angle = launch_angles[ridx]
-            ray.source_depth = source_depth
-        
+        # unpack results
+        rays_list = []
+        for k, single_ray in enumerate(rays_ls):
+            if single_ray is None:
+                continue
+            else:
+                rays_list.append(single_ray)
+
+                # _shoot_single_ray_process does not save launch angle in ray object
+                # need to set manually here
+                rays_list[k].launch_angle = launch_angles[k]
+
         ray_fan = pr.RayFan(rays_list)
 
         # close and unlink shared memory
@@ -181,15 +191,15 @@ def shoot_ray(
     y0 = np.array([0, source_depth, np.sin(np.radians(launch_angle))/c])
 
     # launch ray at angle theta
-    ray = _shoot_ray_array(
+    sols, full_ray, n_bottom, n_surface = _shoot_ray_array(
         y0, source_depth, source_range, reciever_range, x_eval, cin, cpin, rin, zin, depths, depth_ranges, bottom_angles, rtol, terminate_backwards,debug
     )
+    if full_ray is None:
+        return None
+    else:
+        ray = pr.Ray(full_ray[0,:], full_ray[1:,:], n_bottom, n_surface, launch_angle, source_depth)
 
-    # assign launch angle to ray object
-    ray.launch_angle = launch_angle
-    ray.source_depth = source_depth
-
-    return ray
+        return ray
 
 def _shoot_ray_array(
     y0 : np.array,
@@ -246,9 +256,14 @@ def _shoot_ray_array(
     rtol : float
         relative tolerance for the ODE solver, default is 1e-6
     terminate_backwards : bool
-        whether to terminate ray if it bounces backwards
+        whether to terminate ray if it bounces backwards. Default True.
     debug : bool
         whether to print debug information, default is False
+
+    Returns
+    -------
+    ray : pr.Ray
+        Ray object
     """
 
     # initialize loop parameters
@@ -288,13 +303,12 @@ def _shoot_ray_array(
             rtol=rtol,
         )
 
-        try:
-            sols.append(sol)
-            full_ray = np.append(full_ray, np.vstack((sol.t, sol.y)), axis=1)
-        except ValueError as e:
-            if debug:
-                print(f"Error appending ray segment: solution: {e}")
-            return None, None, None
+        if len(sol.t) == 0:
+            raise Exception('Integration segment failed, no points returned.')
+        
+        sols.append(sol)
+        full_ray = np.append(full_ray, np.vstack((sol.t, sol.y)), axis=1)
+
         # if end of integration is reached, end loop
         if sol.message == 'The solver successfully reached the end of the integration interval.':
             break
@@ -323,32 +337,23 @@ def _shoot_ray_array(
 
         # Bottom Bounce
         elif len(sol.t_events[1])==1:
+            # β: bottom angle in degrees
             beta = bottom_angle_interp(x_intermediate)
-            theta_bounce = -theta + 2*beta
+            theta_bounce = 2*beta - theta
             n_bottom += 1
-            # TODO double check bottom reflection angle
-        
+
         # terminate if ray bounces backwards
         if terminate_backwards and (np.abs(theta_bounce) > 90):
             if debug:
-                print('ray bounced backwards, terminating integration')
-            return None,None,None
+                print(f'ray bounced backwards, terminating integration')
+            return None,None,None,None
         
         # update ray angle
         y_intermediate[2] = np.sin(np.radians(theta_bounce)) / c
         
         loop_count += 1
-
-    # construct Ray object
-
-    ray = pr.Ray(
-        full_ray[0,:],
-        full_ray[1:,:],
-        n_bottom,
-        n_surface,
-    )
-    
-    return ray
+        
+    return sols, full_ray, n_bottom, n_surface
 
 def _shoot_single_ray_process(
         y0 : np.array,
@@ -402,7 +407,7 @@ def _shoot_single_ray_process(
     bottom_angles = shared_arrays['bottom_angle']
     x_eval = shared_arrays['x_eval']
 
-    ray = _shoot_ray_array(
+    sols, full_ray, n_bottom, n_surface = _shoot_ray_array(
         y0,
         source_depth,
         source_range,
@@ -420,6 +425,11 @@ def _shoot_single_ray_process(
         debug,
     )
     
+    if full_ray is None:
+        return None
+    else:
+        ray = pr.Ray(full_ray[0,:], full_ray[1:,:], n_bottom, n_surface, source_depth=source_depth)
+
     # unlink all shared arrays after process is done
     for var in existing_shms:
         existing_shms[var].close()
@@ -476,11 +486,11 @@ def _shoot_ray_segment(
     # set up surface and bottom bounce events
     surface_event = pr.surface_bounce
     surface_event.terminal = True
-    #surface_event.direction = -1
+    surface_event.direction = 1
     
     bottom_event = pr.bottom_bounce  
     bottom_event.terminal = True
-    #bottom_event.direction = 0
+    bottom_event.direction = 1
 
     events = (
         surface_event,
@@ -510,4 +520,4 @@ def unpack_envi(environment):
 
     return cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles
 
-__all__ = ['_shoot_ray_segment', 'shoot_rays', 'shoot_ray','_shoot_single_ray_process', 'unpack_envi']
+__all__ = ['_shoot_ray_segment', 'shoot_rays', 'shoot_ray','_shoot_single_ray_process', 'unpack_envi', '_shoot_ray_array']
