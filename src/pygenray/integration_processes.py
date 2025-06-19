@@ -33,7 +33,7 @@ def derivsrd(
         depth_ranges : np.array,
     ) -> np.array:
     '''
-    Compute the differential equations for ray propagation. The ray equations are derived from the Hamiltonian formulation for ray theory [Colosi2016]_, which consist of three coupled ODEs with range as the independant varibale, given by equations :eq:`ray1`, :eq:`ray2`, and :eq:`ray3`.
+    Compute the differential equations for ray propagation. The ray equations are derived from the Hamiltonian formulation for ray theory [Colosi2016a]_, which consist of three coupled ODEs with range as the independant varibale, given by equations :eq:`ray1d`, :eq:`ray2d`, and :eq:`ray3d`.
 
     .. math::
         y = \\left [ t, z, p \\right ]^T
@@ -41,11 +41,11 @@ def derivsrd(
     where :math:`t` is the travel time, :math:`z` is the depth, and :math:`p` is the ray parameter :math:`(\\frac{sin(\\theta)}{c})`, and range, :math:`x` is the independant variable.
 
     .. math :: \\frac{dT}{dx} = \\frac{1}{c\\sqrt{1-c^2 \\ p_z^2}} \\\\
-        :label: ray1
+        :label: ray1d
     .. math :: \\frac{dz}{dx} = \\frac{c \\ p_z}{ \\sqrt{1-c^2 \\ p_z^2}} \\\\
-        :label: ray2
+        :label: ray2d
     .. math :: \\frac{dp_z}{dx} = -\\frac{1}{c^2}\\frac{1}{\\sqrt{1-c^2 \\ p_z^2}}\\frac{\\partial c}{\\partial z} \\\\
-        :label: ray3
+        :label: ray3d
 
     Parameters
     ----------
@@ -73,7 +73,7 @@ def derivsrd(
 
     References
     ----------
-    .. [Colosi2016] Colosi, J. A. (2016). Sound Propagation through the Stochastic Ocean, Cambridge University Press, 443 pages.
+    .. [Colosi2016a] Colosi, J. A. (2016). Sound Propagation through the Stochastic Ocean, Cambridge University Press, 443 pages.
     '''
     
     #unpack ray variables

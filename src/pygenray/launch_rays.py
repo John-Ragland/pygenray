@@ -1,10 +1,7 @@
-import numba
 import numpy as np
 import scipy.integrate
 import pygenray as pr
-import ocean_acoustic_env as oaenv
 import scipy
-from multiprocessing import shared_memory
 import multiprocessing as mp
 from functools import partial
 from tqdm import tqdm
@@ -15,8 +12,8 @@ def shoot_rays(
         launch_angles : np.array,
         reciever_range : float,
         x_eval : np.array,
-        environment : oaenv.environment.OceanEnvironment2D,
-        rtol = 1e-6,
+        environment : pr.OceanEnvironment2D,
+        rtol = 1e-9,
         terminate_backwards : bool = True,
         n_processes : int = None,
         debug : bool = True
@@ -36,7 +33,7 @@ def shoot_rays(
         reciever range (meters)
     x_eval : np.array
         The range values to save the ray state at.s
-    environment : pr.environment.OceanEnvironment
+    environment : pr.OceanEnvironment
         OceanEnvironment object specifying sound speed and bathymetry.
     rtol : float
         relative tolerance for the ODE solver, default is 1e-6
@@ -62,7 +59,7 @@ def shoot_rays(
     # set up initial conditions for ray variable
 
     ## unpack environment object
-    cin, cpin, rin, zin, depths, depth_ranges, bottom_angles = unpack_envi(environment)
+    cin, cpin, rin, zin, depths, depth_ranges, bottom_angles = _unpack_envi(environment)
     
     # check that coordinates are monotonically increasing
     if not (np.all(np.diff(rin) >= 0)):
@@ -146,8 +143,8 @@ def shoot_ray(
     launch_angle : float,
     reciever_range : float,
     x_eval : np.array,
-    environment : oaenv.environment.OceanEnvironment2D,
-    rtol = 1e-6,
+    environment : pr.OceanEnvironment2D,
+    rtol = 1e-9,
     terminate_backwards : bool = True,
     debug : bool = True
 ):
@@ -166,7 +163,7 @@ def shoot_ray(
         reciever range (meters)
     x_eval : np.array
         The range values to save the ray state at.s
-    environment : pr.environment.OceanEnvironment
+    environment : pr.OceanEnvironment
         OceanEnvironment object specifying sound speed and bathymetry.
     rtol : float
         relative tolerance for the ODE solver, default is 1e-6
@@ -176,7 +173,7 @@ def shoot_ray(
         whether to print debug information, default is False
 
     """
-    cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles = unpack_envi(environment)
+    cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles = _unpack_envi(environment)
 
     # check that coordinates are monotonically increasing
     if not (np.all(np.diff(rin) >= 0)):
@@ -214,14 +211,14 @@ def _shoot_ray_array(
     depths : np.array,
     depth_ranges : np.array,
     bottom_angles : np.array,
-    rtol = 1e-6,
+    rtol = 1e-9,
     terminate_backwards : bool = True,
     debug : bool = True,
 ):
     """
     Integrate single ray. Integration is terminated at bottom and surface reflections, and reflection angle is calculated and updated. Integration is looped until ray reaches reciever range. If there is an error in the integration, the function returns None, None, None.
     
-    Environment specified by numpy arrays that are returned by {mod}`pr.unpack_envi()`.
+    Environment specified by numpy arrays that are returned by {mod}`pr._unpack_envi()`.
 
     Parameters
     ----------
@@ -251,7 +248,7 @@ def _shoot_ray_array(
         array of depth ranges (meters), should be 1D with shape (m,)
     bottom_angles : np.array(m,)
         array of bottom angles (degrees), should be 1D with shape and correspond to range bins `depth_ranges`
-    environment : pr.environment.OceanEnvironment
+    environment : pr.OceanEnvironment
         OceanEnvironment object specifying sound speed and bathymetry.
     rtol : float
         relative tolerance for the ODE solver, default is 1e-6
@@ -361,7 +358,7 @@ def _shoot_single_ray_process(
         source_depth : float,
         reciever_range : float,
         array_metadata : dict,
-        rtol = 1e-6,
+        rtol = 1e-9,
         terminate_backwards : bool = True,
         debug : bool = False
 ):
@@ -447,7 +444,7 @@ def _shoot_ray_segment(
         depths : np.array,
         depth_ranges : np.array,
         x_eval : np.array = None,
-        rtol = 1e-6,
+        rtol = 1e-9,
         debug : bool = False
 ):
     """
@@ -509,7 +506,7 @@ def _shoot_ray_segment(
 
     return sol
 
-def unpack_envi(environment):
+def _unpack_envi(environment):
     cin = np.array(environment.sound_speed.values)
     cpin = np.array(environment.sound_speed.differentiate('depth').values)
     rin = np.array(environment.sound_speed.range.values)
@@ -520,4 +517,4 @@ def unpack_envi(environment):
 
     return cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles
 
-__all__ = ['_shoot_ray_segment', 'shoot_rays', 'shoot_ray','_shoot_single_ray_process', 'unpack_envi', '_shoot_ray_array']
+__all__ = ['_shoot_ray_segment', 'shoot_rays', 'shoot_ray','_shoot_single_ray_process', '_unpack_envi', '_shoot_ray_array']

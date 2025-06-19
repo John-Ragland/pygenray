@@ -29,6 +29,17 @@ class Ray:
             number of surface reflections for ray
         launch_angle : float
             launch angle of ray
+
+        Attributes
+        ----------
+        r : np.array
+        t : np.array
+        z : np.array
+        p : np.array
+        n_bottom : np.array
+        n_surface : np.array
+        launch_angle : np.array
+        source_depth : np.array
         """
 
         self.r = r

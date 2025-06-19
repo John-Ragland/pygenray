@@ -6,14 +6,11 @@ pip install pygenray
 ```
 
 ## Run a simple ray code
-Environment specification is handled with the `ocean_acoustic_environment` package.
-The default environment is a munk sound speed profile for 1000 km.
 
 ```python
-import ocean_acoustic_environment as oaenv
 import pygenray as pr
 
-envi = oaenv.OceanEnvironment2D(flat_earth_transform=False)
+envi = pr.OceanEnvironment2D(flat_earth_transform=False)
 thetas = np.linspace(-15,15,6000)# 6 thousand launch angles
 
 result = pr.shoot_ray(

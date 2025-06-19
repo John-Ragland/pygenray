@@ -26,8 +26,9 @@ classifiers = [
 ]
 dependencies = [
   "xarray",
-  "jax",
-  "diffrax",
+  "matplotlib",
+  "numba",
+  "tqdm",
 ]
 [project.optional-dependencies]
 docs = [

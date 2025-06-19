@@ -1,4 +1,3 @@
-import multiprocessing as mp
 from multiprocessing import shared_memory
 import numpy as np
 
