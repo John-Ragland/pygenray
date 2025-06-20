@@ -8,8 +8,7 @@ def _init_shared_memory(
         zin,
         depths,
         depth_ranges,
-        bottom_angle,
-        x_eval
+        bottom_angle
 ):
     '''
     Initialize shared memory for multiprocessing
@@ -37,7 +36,7 @@ def _init_shared_memory(
         Dictionary containing shared memory objects for each array
     '''
     shared_array_names = [
-        'cin','cpin','rin','zin','depths','depth_ranges','bottom_angle','x_eval'
+        'cin','cpin','rin','zin','depths','depth_ranges','bottom_angle'
     ]
     shared_arrays_np = {
         'cin':cin,
@@ -47,7 +46,6 @@ def _init_shared_memory(
         'depths':depths,
         'depth_ranges':depth_ranges,
         'bottom_angle':bottom_angle,
-        'x_eval':x_eval
     }
 
     shms = {}
@@ -105,7 +103,7 @@ def _unpack_shared_memory(shared_array_metadata):
         Dictionary containing existing shared memory objects
     """
     shared_array_names = [
-        'cin','cpin','rin','zin','depths','depth_ranges','bottom_angle','x_eval'
+        'cin','cpin','rin','zin','depths','depth_ranges','bottom_angle'
     ]
 
     existing_shms = {}

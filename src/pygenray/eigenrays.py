@@ -5,7 +5,7 @@ import pygenray as pr
 import numpy as np
 
 
-def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_range, x_eval, envi_munk, ztol=1, max_iter=20):
+def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_range, num_range_save, envi_munk, ztol=1, max_iter=20):
     '''
     Given an initial ray fan, find eigenrays with bisection method of root finding.
 
@@ -21,10 +21,10 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
         source range in meters
     receiver_range : float
         receiver range in meters
-    x_eval : np.array
-        one dimensional array of range values to evaluate rays at
-    envi_munk : oeanv.OceanAcousticEnvironment
-        OceanAcousticEnvironment object containing environment parameters for ray tracing.
+    num_range_save : int
+        number of range values to save the ray state at
+    envi_munk : pr.OceanEnvironment2D
+        OceanEnvironment2D object containing environment parameters for ray tracing.
     ztol : float, optional
         depth tolerance for eigenrays, by default 1 m
     max_iter : int, optional
@@ -71,7 +71,7 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
 
             # Bisection root finding loop
             while not within_tolerance:
-                ray = pr.shoot_ray(source_depth, source_range, bisection_theta, receiver_range, x_eval, envi_munk)
+                ray = pr.shoot_ray(source_depth, source_range, bisection_theta, receiver_range, num_range_save, envi_munk)
                 
 
                 if np.abs(ray.z[-1] - receiver_depth) < ztol:
