@@ -5,7 +5,7 @@ import pygenray as pr
 import numpy as np
 
 
-def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_range, num_range_save, envi_munk, ztol=1, max_iter=20):
+def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_range, num_range_save, environment, ztol=1, max_iter=20):
     '''
     Given an initial ray fan, find eigenrays with bisection method of root finding.
 
@@ -23,7 +23,7 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
         receiver range in meters
     num_range_save : int
         number of range values to save the ray state at
-    envi_munk : pr.OceanEnvironment2D
+    environment : pr.OceanEnvironment2D
         OceanEnvironment2D object containing environment parameters for ray tracing.
     ztol : float, optional
         depth tolerance for eigenrays, by default 1 m
@@ -35,7 +35,7 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
     erays : dict
         dictionary of eigen rays. Key values are values in `receiver_depths`.
     '''
-    erays = {}
+    erays_dict = {}
 
     for rd_idx, receiver_depth in enumerate(receiver_depths):
         print(f'Reciever depth: {receiver_depth} [m]')
@@ -58,7 +58,7 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
 
         bisection_thetas = theta1s + (theta2s - theta1s) * ((receiver_depth - z1s) / (z2s - z1s))
 
-        erays[rd_idx] = []
+        erays_dict[rd_idx] = []
         # Solve for each eigen ray at receiver depth
         for k in range(len(bisection_thetas)):
             iter_count = 0
@@ -71,11 +71,10 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
 
             # Bisection root finding loop
             while not within_tolerance:
-                ray = pr.shoot_ray(source_depth, source_range, bisection_theta, receiver_range, num_range_save, envi_munk)
-                
+                ray = pr.shoot_ray(source_depth, source_range, bisection_theta, receiver_range, num_range_save, environment)
 
                 if np.abs(ray.z[-1] - receiver_depth) < ztol:
-                    erays[rd_idx].append(ray)
+                    erays_dict[rd_idx].append(ray)
                     within_tolerance = True
 
                 if ray.z[-1] < receiver_depth:
@@ -97,9 +96,7 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
                     break
                 iter_count += 1
 
-    # convert lists of rays to RayFan objects
-    for rdepth in erays:
-        erays[rdepth] = pr.RayFan(erays[rdepth])
+    erays = pr.EigenRays(receiver_depths, erays_dict, environment)
     return erays
 
 __all__ = ['find_eigenrays']

@@ -1,5 +1,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
+import pygenray as pr
 
 class Ray:
     """
@@ -131,7 +132,7 @@ class RayFan:
         
         return
 
-    def plot_time_front(self,include_lines=False, **kwargs):
+    def plot_time_front(self,include_lines=False, range_idx=-1, **kwargs):
         '''
         plot time front. Key word arguments are passed to plt.scatter.
 
@@ -142,12 +143,12 @@ class RayFan:
         '''
 
         if include_lines:
-            plt.plot(self.ts[:,-1], self.zs[:,-1], c='#aaaaaa', lw=0.5, zorder=5)
-        
-        
+            plt.plot(self.ts[:,range_idx], self.zs[:,range_idx], c='#aaaaaa', lw=0.5, zorder=5)
+
+
         scatter_kwargs = {'c': self.thetas, 'cmap': 'managua', 's': 2, 'lw': 0, 'zorder': 6}
         scatter_kwargs.update(kwargs)
-        plt.scatter(x=self.ts[:,-1], y=self.zs[:,-1], **scatter_kwargs)
+        plt.scatter(x=self.ts[:,range_idx], y=self.zs[:,range_idx], **scatter_kwargs)
 
 
         plt.ylim([self.zs.max(), self.zs.min()])
@@ -304,4 +305,107 @@ class RayFan:
         
         return RayFan(selected_rays)
 
-__all__ = ['Ray','RayFan']
+
+class EigenRays:
+    '''
+    EigenRays Object - python object that store all parameters associated with eigen rays for given reciever depths
+
+    Parameters
+    ----------
+    reciever_depths : list
+        List of receiver depths for which eigen rays are computed.
+    eigenray_dict : dict
+        dictionary of eigen rays. Key values are indices of reciever depths, and values are lists of pr.Ray objects.
+    environment : pr.OceanEnvironment2D
+        OceanEnvironment2D environment used for ray tracing.
+
+    Attributes
+    ----------
+    reciever_depths : list
+        List of receiver depths for which eigen rays are computed. This is used to index the eigen rays.
+    source_depth : float
+        source depth for eigen rays.
+    rs : dict
+        dictionary of eigenray ranges. keys are range depth indices. values are arrays of shape (M,N), where M is number of eigen rays and N is number of range steps
+    ts : dict
+        dictionary of eigenray times. keys are range depth indices. values are arrays of shape (M,N), where M is number of eigen rays and N is number of range steps
+    zs : dict
+        dictionary of eigenray depths. keys are range depth indices. values are arrays of shape (M,N), where M is number of eigen rays and N is number of range steps
+    ps : dict
+        dictionary of eigenray ray parameters (sin(θ)/c). keys are range depth indices. values are arrays of shape (M,N), where M is number of eigen rays and N is number of range steps
+    received_angles : dict
+        dictionary of eigenray launch angles. keys are range depth indices. values are arrays of shape (M,), where M is number of eigen rays
+    launch_angles : dict
+        dictionary of eigenray launch angles. keys are range depth indices. values are arrays of shape (M,), where M is number of eigen rays
+    n_bottome : dict
+        dictionary of number of bottom reflections for eigen rays. keys are range depth indices. values are arrays of shape (M,), where M is number of eigen rays
+    n_surface : dict
+        dictionary of number of surface reflections for eigen rays. keys are range depth indices. values are arrays of shape (M,), where M is number of eigen rays
+
+    '''
+
+    def __init__(self,reciever_depths, eigenray_dict, environment):
+        self.reciever_depths = reciever_depths
+
+        self.rs = {}
+        self.ts = {}
+        self.zs = {}
+        self.ps = {}
+        self.received_angles = {}
+
+
+        for ridx in range(len(reciever_depths)):
+            # use ray fan concatenation to construct arrays
+            eray_fan = RayFan(eigenray_dict[ridx])
+
+            self.rs[ridx] = eray_fan.rs
+            self.ts[ridx] = eray_fan.ts
+            self.zs[ridx] = eray_fan.zs
+            self.ps[ridx] = eray_fan.ps
+
+            received_angles_single = []
+            # compute receive angle
+            for eray_idx in range(eray_fan.rs.shape[0]):
+                y_last = np.stack((eray_fan.ts[eray_idx, -1], eray_fan.zs[eray_idx, -1], eray_fan.ps[eray_idx, -1]))
+                theta, c = pr.ray_angle(
+                    eray_fan.rs[eray_idx, -1],
+                    y_last, environment.sound_speed.values,
+                    environment.sound_speed.range.values,
+                    environment.sound_speed.depth.values
+                )
+                received_angles_single.append(theta)
+            self.received_angles[ridx] = np.array(received_angles_single)
+
+    def plot_angle_time(self,ridxs = None, **kwargs):
+
+        if ridxs is None:
+            ridxs = list(self.received_angles.keys())
+        
+        for ridx in ridxs:
+            plt.scatter(self.ts[ridx][:,-1], self.received_angles[ridx], **kwargs, label=f'Receiver Depth: {self.reciever_depths[ridx]} [m]')
+
+        plt.legend()
+        
+    def plot(self, ridxs = [0]):
+        '''
+        Plot all eigen rays in time-depth space
+
+        Parameters
+        ----------
+        ridxs : list
+            list of receiver depth indices to plot. Default is [0], which plots the first receiver depth.
+        '''
+
+        # if ridx is int, make list of length 1
+        if isinstance(ridxs, int):
+            ridxs = [ridxs]
+
+        for ridx in ridxs:
+            plt.plot(self.rs[ridx].T, self.zs[ridx].T, c=f'C{ridx}', )
+
+        plt.xlabel('range [m]')
+        plt.ylabel('depth [m]')
+        plt.title('Eigen Rays')
+
+
+__all__ = ['Ray','RayFan','EigenRays']
