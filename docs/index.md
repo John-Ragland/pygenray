@@ -3,6 +3,10 @@ rhymes with "eigen-ray"
 
 Modern python based ray code for modelling underwater acoustic propagation, built on top of existing numerical integration methods in scipy :mod:`scipy.integrate`. This allows for more specific control over the numerical integration methods used for solving the ray equations.
 
+```{warning}
+Some of the main functionality of this package is still under development. If you run into any errors, please feel free to submit an issue. I may or may not be able to get to it, so you might also have to play around with trying to fix it yourself.
+
+
 ```{toctree}
 :maxdepth: 2
 :hidden:
