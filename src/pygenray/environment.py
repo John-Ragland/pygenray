@@ -7,19 +7,25 @@ import xarray as xr
 import numpy as np
 from matplotlib import pyplot as plt
 import scipy
+from tqdm import tqdm
+import multiprocessing as mp
 
 class OceanEnvironment2D:
     """
-    Ocean Environment Specification (2D)
-    Being built for 2D ray propagation, so bottom properties aren't specified.
+    Ocean Environment Specification (2D).
+
+    An ocean acoustic environment specification built around xarray scientific computing environment.
+    Flat earth transformation is computed for single latitude.
 
     Parameters
     ----------
     sound_speed : xr.DataArray
         1D or 2D array with coordinate dimensions (depth,) or (depth,range.Order of dimensions is arbitrary. Units of sound speed should be in [m/s] and units of coordinates should be in [m]. Default is range-independent Munk profile for range of 100km.
-    Bathymetry : xr.DataArray
+    bathymetry : xr.DataArray
         1D array of bottom depth with coordinate dimension (range,). Units of bathymetry should be in [m]. Range grid does not have to be aligned with sound speed range grid.
         Default is flat bottom at 5000m depth.
+    lat : float
+        latitude in degrees. Used for flat earth transformation. Deffault is 35 degrees.
     flat_earth_transform : bool
         whether to transform sound speed and bathymetry to flat earth.
     verbose : bool
@@ -43,9 +49,11 @@ class OceanEnvironment2D:
             self,
             sound_speed=None,
             bathymetry=None,
+            lat=35,
             flat_earth_transform=True,
             verbose=False
             ):
+        
         # Check Sound Speed Profile
         if sound_speed is None:
             # calculate Munk profile
@@ -85,24 +93,14 @@ class OceanEnvironment2D:
             if 'range' not in bathymetry.dims:
                 raise ValueError("bathymetry must have a 'range' dimension.")
 
+        # save sound speed and bathymetry
+        self.sound_speed = sound_speed
+        self.dcdz = sound_speed.differentiate('depth').values
+        self.bathymetry = bathymetry
+
         # If selected, do flat-earth transformation
         if flat_earth_transform:
-            raise Exception('flat earth transformation not implemented yet')
-            sound_speed_flat = ocean_utils.flat_earth_c(sound_speed)
-            bathy_flat = ocean_utils.flat_earth_bathy(bathymetry)
-            # save bathymetry and sound speed
-            if verbose:
-                print("Saving sound speed profile and computing dc/dz...")
-            self.sound_speed = sound_speed_flat
-            self.dcdz = sound_speed_flat.differentiate('depth')
-            self.bathymetry = bathy_flat
-        else:
-            # save bathymetry and sound speed
-            if verbose:
-                print("Saving sound speed profile and computing dc/dz...")
-            self.sound_speed = sound_speed
-            self.dcdz = sound_speed.differentiate('depth').values
-            self.bathymetry = bathymetry
+            self.flat_earth_transform(lat=lat)
 
         # compute bottom slope
         bottom_slope = np.gradient(self.bathymetry.values, self.bathymetry.range.values)
@@ -115,20 +113,68 @@ class OceanEnvironment2D:
             kind='cubic',
         )
 
+    def flat_earth_transform(self,lat):
+        '''
+        Earth flattening transformation, change depths and sound speeds
+        so that spherical shell can be done as an x-z slice (using WGS-84).
 
-    def plot(self,):
+        Single latitude is used. If latitude changes sufficiently over track,
+        consider using flat_earth_rd() ``range dependenant'' version instead.
+        
+        Parameters
+        ----------
+        lat : float
+            latitude in degrees. Positive is north, negative is south.
+        '''
+
+        # transform sound speed
+        cs_fe = []
+        for ridx in range(self.sound_speed.sizes['range']):
+            c_slice = self.sound_speed.isel({'range': ridx})
+            depf, cf = eflat(c_slice.depth.values, lat, c_slice.values)
+            cs_fe.append(xr.DataArray(cf, dims='depth', coords={'depth': depf}))
+        cs_fe = xr.concat(cs_fe, dim='range').assign_coords({'range': self.sound_speed.range})
+        
+        # transform bathymetry
+        bathy_flat,_ = eflat(self.bathymetry.values, lat)
+        bathy_fe = xr.DataArray(bathy_flat, dims='range', coords={'range': self.bathymetry.range.values})
+        
+        # save flat earth transformed sound speed and bathymetry
+        self.sound_speed_fe = cs_fe
+        self.bathymetry_fe = bathy_fe
+        return
+    
+    def flat_earth_transform_rd(self,):
+        '''
+        Earth flattening transformation, change depths and sound speeds
+        so that spherical shell can be done as an x-z slice (using WGS-84).
+
+        earth flattening is computed for each range / lat value independently.
+        '''
+
+        c_fe = flat_earth_c(self.sound_speed, verbose=False)
+        bathy_fe = self.bathymetry.copy(deep=True)
+
+        # save flat earth transformed sound speed and bathymetry
+        self.sound_speed_fe = c_fe
+        self.dcdz = c_fe.differentiate('depth')
+        self.bathymetry_fe = bathy_fe
+        return
+    
+    def plot(self,**kwargs):
         '''
         plot 2D slice of environment
-        '''
-        fig = plt.figure(figsize=(10,3))
-        ax = plt.gca()
 
+        kwargs are passed to matplotlib.pyplot.pcolormesh through xarray
+        '''
+
+        ssp_kwargs = {'cmap': 'viridis', 'cbar_kwargs': {'label': 'sound speed [m/s]'}}
+        ssp_kwargs.update(kwargs)
         self.sound_speed.plot(
             x='range',
             y='depth',
-            cmap='viridis',
-            cbar_kwargs={'label': 'sound speed [m/s]'},
-            ax=ax)
+            **ssp_kwargs
+        )
         
         # plot bathymetry
         plt.fill_between(
@@ -141,13 +187,12 @@ class OceanEnvironment2D:
         )
 
         # Convert axis ticks to km
-        ax.set_xlabel('range [m]')
-        ax.set_ylabel('depth [m]')
+        plt.xlabel('range [m]')
+        plt.ylabel('depth [m]')
         #ax.set_xticklabels([f'{x/1000:.0f}' for x in ax.get_xticks()])
-        ax.set_ylim(self.sound_speed.depth.max(), self.sound_speed.depth.min())
+        plt.ylim(self.sound_speed.depth.max(), self.sound_speed.depth.min())
 
-        
-        return fig
+        return
 
 def munk_ssp(z, sofar_depth=1300, eps=0.00737):
     '''
@@ -168,6 +213,131 @@ def munk_ssp(z, sofar_depth=1300, eps=0.00737):
     zh = 2*(z - sofar_depth)/sofar_depth
     c = 1500*(1 + eps*(zh - 1 + np.exp(-zh)))
     return c
+
+def flat_earth_c(c: xr.DataArray, verbose: bool = False, n_cpus: int=None, chunk_size: int=None):
+    '''
+    given a 2D sound-speed slice with dimensions ['depth','range'] and coordinates ['depth', 'range', 'latitude'], 
+    compute flat earth transformed sound speed array.
+    
+    Processing is parallelized across available CPUs or SLURM allocated CPUs, with multiple range points processed
+    per worker for improved efficiency.
+
+    Parameters
+    ----------
+    c : xr.DataArray
+        sound speed profile with dimensions ['depth','range'], and coordinates ['depth','range','latitude']
+    verbose : bool
+        if true, print information
+    n_cpus : int
+        number of cpus used to parallelize range-dependant transformation
+    chunk_size : int
+        number of range points to process per worker. If None, automatically determined.
+    
+    Returns
+    -------
+    cfs_x : xr.DataArray
+        flattened soundspeed profile
+    '''
+    
+    if n_cpus is None:
+        n_cpus = mp.cpu_count()
+
+    # Get total number of range points
+    total_ranges = c.sizes['range']
+    
+    # Determine chunk size if not provided
+    if chunk_size is None:
+        # Aim for each CPU to handle at least 4 chunks, but no fewer than 5 points per chunk
+        chunk_size = max(5, min(50, total_ranges // (n_cpus * 4)))
+    
+    # Create chunks of range indices
+    r_chunks = []
+    for i in range(0, total_ranges, chunk_size):
+        r_chunks.append(list(range(i, min(i + chunk_size, total_ranges))))
+    
+    if verbose:
+        print(f"Processing {total_ranges} range points with {n_cpus} CPUs using {len(r_chunks)} chunks "
+              f"(~{chunk_size} points per chunk)")
+    
+    # Process data sequentially if only one CPU is available or for very small datasets
+    if n_cpus == 1 or total_ranges < 10:
+        results = []
+        for r_idx in tqdm(range(total_ranges)):
+            c_slice = c.isel({'range': r_idx})
+            depf, cf = eflat(c_slice.depth, c_slice.lat, c_slice)
+            cf_da = xr.DataArray(cf, dims='depth', coords={'depth': depf})
+            cf_interp = cf_da.interp(depth=c.depth)
+            results.append(cf_interp)
+    else:
+        # Use multiprocessing for parallel computation
+        results = _process_ranges_chunked_parallel(c, r_chunks, n_cpus)
+    
+    # Concatenate results along range dimension
+    cfs_x = xr.concat(results, dim='range')
+    cfs_x = cfs_x.assign_coords({'range': c.range, 'lat': c.lat})
+    
+    return cfs_x
+
+def _process_chunk_worker(args):
+    """
+    Worker function for processing a chunk of range points
+    
+    Parameters
+    ----------
+    args : tuple
+        c : xr.DataArray
+            sound speed profile
+        r_indices : list
+            list of range indices to process
+    
+    Returns
+    -------
+    list
+        list of processed DataArrays for each range point
+    """ 
+    c, r_indices = args
+    results = []
+    
+    for r_idx in r_indices:
+        c_slice = c.isel({'range': r_idx})
+        depf, cf = eflat(c_slice.depth, c_slice.lat, c_slice)
+        cf_da = xr.DataArray(cf, dims='depth', coords={'depth': depf})
+        cf_interp = cf_da.interp(depth=c.depth)
+        results.append(cf_interp)
+    
+    return results
+
+def _process_ranges_chunked_parallel(c, r_chunks, n_cpus):
+    """Process multiple range chunks in parallel
+    
+    Parameters
+    ----------
+    c : xr.DataArray
+        sound speed profile
+    r_chunks : list
+        list of lists of range indices
+    n_cpus : int
+        number of CPUs to use
+    
+    Returns
+    -------
+    list
+        flattened list of processed DataArrays for all range points
+    """
+    # Create argument tuples for each chunk
+    args_list = [(c, chunk) for chunk in r_chunks]
+    
+    # Run in parallel with progress bar
+    all_results = []
+    with mp.Pool(processes=n_cpus) as pool:
+        for chunk_results in tqdm(
+            pool.imap(_process_chunk_worker, args_list), 
+            total=len(r_chunks),
+            desc="Processing chunks"
+        ):
+            all_results.extend(chunk_results)
+    
+    return all_results
 
 def eflat(dep,lat,cs=None):
     """

@@ -68,6 +68,7 @@ class Ray:
         plt.ylim([self.z.max(), self.z.min()])
         return
 
+
 class RayFan:
     """
     RayFan Object - python object that store all parameters associated with a ray fan.
@@ -337,14 +338,14 @@ class EigenRays:
         dictionary of eigenray launch angles. keys are range depth indices. values are arrays of shape (M,), where M is number of eigen rays
     launch_angles : dict
         dictionary of eigenray launch angles. keys are range depth indices. values are arrays of shape (M,), where M is number of eigen rays
-    n_bottome : dict
+    n_bottom : dict
         dictionary of number of bottom reflections for eigen rays. keys are range depth indices. values are arrays of shape (M,), where M is number of eigen rays
     n_surface : dict
         dictionary of number of surface reflections for eigen rays. keys are range depth indices. values are arrays of shape (M,), where M is number of eigen rays
 
     '''
 
-    def __init__(self,reciever_depths, eigenray_dict, environment):
+    def __init__(self,reciever_depths, eigenray_dict, environment, num_eigenrays, num_eigenrays_found):
         self.reciever_depths = reciever_depths
 
         self.rs = {}
@@ -352,7 +353,8 @@ class EigenRays:
         self.zs = {}
         self.ps = {}
         self.received_angles = {}
-
+        self.launch_angles = {}
+        self.ray_id = {}
 
         for ridx in range(len(reciever_depths)):
             # use ray fan concatenation to construct arrays
@@ -364,6 +366,7 @@ class EigenRays:
             self.ps[ridx] = eray_fan.ps
 
             received_angles_single = []
+            ray_ids = []
             # compute receive angle
             for eray_idx in range(eray_fan.rs.shape[0]):
                 y_last = np.stack((eray_fan.ts[eray_idx, -1], eray_fan.zs[eray_idx, -1], eray_fan.ps[eray_idx, -1]))
@@ -374,7 +377,11 @@ class EigenRays:
                     environment.sound_speed.depth.values
                 )
                 received_angles_single.append(theta)
+                ray_id_single = np.sum(np.diff(np.sign(eray_fan.ps[eray_idx,:])) != 0) * np.sign(eray_fan.thetas[eray_idx])
+                ray_ids.append(ray_id_single)
             self.received_angles[ridx] = np.array(received_angles_single)
+            self.launch_angles[ridx] = eray_fan.thetas
+            self.ray_id[ridx] = np.array(ray_ids)
 
     def plot_angle_time(self,ridxs = None, **kwargs):
 
@@ -382,11 +389,13 @@ class EigenRays:
             ridxs = list(self.received_angles.keys())
         
         for ridx in ridxs:
-            plt.scatter(self.ts[ridx][:,-1], self.received_angles[ridx], **kwargs, label=f'Receiver Depth: {self.reciever_depths[ridx]} [m]')
-
-        plt.legend()
+            plt.scatter(self.ts[ridx][:,-1], self.received_angles[ridx], **kwargs)
         
-    def plot(self, ridxs = [0]):
+        plt.xlabel('time [s]')
+        plt.ylabel('received angle [deg]')
+        plt.title('Received Angle vs Time')
+
+    def plot(self, ridxs = [0], **kwargs):
         '''
         Plot all eigen rays in time-depth space
 
@@ -400,12 +409,16 @@ class EigenRays:
         if isinstance(ridxs, int):
             ridxs = [ridxs]
 
+        ray_kwargs = {'c':'k'}
+        ray_kwargs.update(kwargs)
+
         for ridx in ridxs:
-            plt.plot(self.rs[ridx].T, self.zs[ridx].T, c=f'C{ridx}', )
+            plt.plot(self.rs[ridx].T, self.zs[ridx].T, **ray_kwargs)
 
         plt.xlabel('range [m]')
         plt.ylabel('depth [m]')
         plt.title('Eigen Rays')
+        plt.ylim([self.zs[ridx].max(), self.zs[ridx].min()])
 
 
 __all__ = ['Ray','RayFan','EigenRays']

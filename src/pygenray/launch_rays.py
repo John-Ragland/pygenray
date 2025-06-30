@@ -123,18 +123,18 @@ def shoot_rays(
 
         # unpack results
         rays_list = []
+        rays_list_idx = 0  # Add separate counter for rays_list
         for k, single_ray in enumerate(rays_ls):
             if single_ray is None:
                 continue
             else:
                 # reinterpolate ray to range grid
-
-
                 rays_list.append(single_ray)
 
                 # _shoot_single_ray_process does not save launch angle in ray object
                 # need to set manually here
-                rays_list[k].launch_angle = launch_angles[k]
+                rays_list[rays_list_idx].launch_angle = launch_angles[k]  # Use separate counter
+                rays_list_idx += 1  # Increment counter
         
         ray_fan = pr.RayFan(rays_list)
 
@@ -531,12 +531,17 @@ def _shoot_ray_segment(
     return sol
 
 def _unpack_envi(environment):
-    cin = np.array(environment.sound_speed.values)
-    cpin = np.array(environment.sound_speed.differentiate('depth').values)
-    rin = np.array(environment.sound_speed.range.values)
-    zin = np.array(environment.sound_speed.depth.values)
-    depths = np.array(environment.bathymetry.values)
-    depth_ranges = np.array(environment.bathymetry.range.values)
+
+    # chech that environment.sound_speed_fe exists
+    if not hasattr(environment, 'sound_speed_fe'):
+        raise Exception('Flat earth transformation has not been applied. Set `flat_earth_transform=True` when creating the OceanEnvironment2D object.')
+    
+    cin = np.array(environment.sound_speed_fe.values)
+    cpin = np.array(environment.sound_speed_fe.differentiate('depth').values)
+    rin = np.array(environment.sound_speed_fe.range.values)
+    zin = np.array(environment.sound_speed_fe.depth.values)
+    depths = np.array(environment.bathymetry_fe.values)
+    depth_ranges = np.array(environment.bathymetry_fe.range.values)
     bottom_angles = np.array(environment.bottom_angle)
 
     return cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles
@@ -570,9 +575,10 @@ def _interpolate_ray(
     full_ray_end = full_ray[:,-1:]
     
     # Interpolate ray variables to range grid
-    full_ray_interpolator = scipy.interpolate.CubicSpline(full_ray_filtered[0,], full_ray_filtered, axis=1) # first range value is repeated
+    full_ray_interpolator = scipy.interpolate.interp1d(full_ray_filtered[0,], full_ray_filtered, axis=1, kind='linear') 
+    #full_ray_interpolator = scipy.interpolate.CubicSpline(full_ray_filtered[0,], full_ray_filtered, axis=1) 
     full_ray_interpolated = full_ray_interpolator(range_save[:-1])
-    
+
     # Add last range value to ray variable
     full_ray_interpolated = np.concatenate((full_ray_interpolated, full_ray_end), axis=1)
 
