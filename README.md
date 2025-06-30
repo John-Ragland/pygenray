@@ -1,7 +1,6 @@
 # pygenray
 
 [![PyPI - Version](https://img.shields.io/pypi/v/pygenray.svg)](https://pypi.org/project/pygenray)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pygenray.svg)](https://pypi.org/project/pygenray)
 
 -----
 
