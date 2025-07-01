@@ -25,6 +25,8 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
+  "numpy",
+  "scipy",
   "xarray",
   "matplotlib",
   "numba",
