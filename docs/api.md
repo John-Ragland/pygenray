@@ -33,3 +33,5 @@
 *mostly for internal use*
 ```{eval-rst}
 .. automodule:: pygenray.ray_objects
+    :members:
+```
