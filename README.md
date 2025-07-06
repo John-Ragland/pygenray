@@ -7,8 +7,6 @@
 
 A python package for simulated 2D ray-based acoustic propagation underwater. This package is designed for Acoustic Tomography, and is primarily interested in calculating accurate ray paths and arrival times. This code does not attempt to compute transmission loss.
 
-## Ray Physics
-
 
 ## Table of Contents
 

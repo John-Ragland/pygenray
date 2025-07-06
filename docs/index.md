@@ -33,7 +33,7 @@ import matplotlib.pyplot as plt
 source_depth = 1000
 source_range = 0
 launch_angles = np.linspace(-20, 20, 1000)  # launch angles in degrees
-reciever_range = 100e3  # receiver range in meters
+receiver_range = 100e3  # receiver range in meters
 num_range_save = 10000  # number of range points to save
 environment = pr.OceanEnvironment2D()
 receiver_depths=[1000]
@@ -42,7 +42,7 @@ rays = pr.shoot_rays(
     source_depth,
     source_range,
     launch_angles,
-    reciever_range,
+    receiver_range,
     num_range_save,
     environment,
 )
@@ -55,7 +55,7 @@ eigenrays = pr.find_eigenrays(
     receiver_depths,
     source_depth,
     source_range,
-    reciever_range,
+    receiver_range,
     num_range_save,
     environment
 )

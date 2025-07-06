@@ -1,6 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import pygenray as pr
+from scipy import io
 
 class Ray:
     """
@@ -140,7 +141,7 @@ class RayFan:
         Parameters
         ----------
         include_lines : bool
-            if True, lines between recieved rays on time plots are plotted
+            if True, lines between received rays on time plots are plotted
         '''
 
         if include_lines:
@@ -190,6 +191,32 @@ class RayFan:
 
         return
     
+    def save_mat(self, filename):
+        """
+        Save RayFan object to a .mat file.
+
+        Parameters
+        ----------
+        filename : str
+            Name of the output .mat file to save the RayFan data.
+        
+        """
+
+        # Create a dictionary to hold the data
+        data = {'rayfan': {
+            'thetas': self.thetas,
+            'xs': self.rs,
+            'ts': self.ts,
+            'zs': self.zs,
+            'ps': self.ps,
+            'n_botts': self.n_botts,
+            'n_surfs': self.n_surfs,
+            'source_depths': self.source_depths
+        }}
+
+        # Save the dictionary to a .mat file
+        io.savemat(filename, data)
+
     def __add__(self, other):
         """
         Add two RayFan objects by concatenating along the launch angle dimension (M).
@@ -309,20 +336,20 @@ class RayFan:
 
 class EigenRays:
     '''
-    EigenRays Object - python object that store all parameters associated with eigen rays for given reciever depths
+    EigenRays Object - python object that store all parameters associated with eigen rays for given receiver depths
 
     Parameters
     ----------
-    reciever_depths : list
+    receiver_depths : list
         List of receiver depths for which eigen rays are computed.
     eigenray_dict : dict
-        dictionary of eigen rays. Key values are indices of reciever depths, and values are lists of pr.Ray objects.
+        dictionary of eigen rays. Key values are indices of receiver depths, and values are lists of pr.Ray objects.
     environment : pr.OceanEnvironment2D
         OceanEnvironment2D environment used for ray tracing.
 
     Attributes
     ----------
-    reciever_depths : list
+    receiver_depths : list
         List of receiver depths for which eigen rays are computed. This is used to index the eigen rays.
     source_depth : float
         source depth for eigen rays.
@@ -345,8 +372,8 @@ class EigenRays:
 
     '''
 
-    def __init__(self,reciever_depths, eigenray_dict, environment, num_eigenrays, num_eigenrays_found):
-        self.reciever_depths = reciever_depths
+    def __init__(self,receiver_depths, eigenray_dict, environment, num_eigenrays, num_eigenrays_found):
+        self.receiver_depths = receiver_depths
 
         self.rs = {}
         self.ts = {}
@@ -355,8 +382,10 @@ class EigenRays:
         self.received_angles = {}
         self.launch_angles = {}
         self.ray_id = {}
+        self.num_eigenrays = num_eigenrays
+        self.num_eigenrays_found = num_eigenrays_found
 
-        for ridx in range(len(reciever_depths)):
+        for ridx in range(len(receiver_depths)):
             # use ray fan concatenation to construct arrays
             eray_fan = RayFan(eigenray_dict[ridx])
 
@@ -420,5 +449,35 @@ class EigenRays:
         plt.title('Eigen Rays')
         plt.ylim([self.zs[ridx].max(), self.zs[ridx].min()])
 
+    def save_mat(self, filename):
+        """
+        Save EigenRays object to a .mat file.
+
+        Parameters
+        ----------
+        filename : str
+            Name of the output .mat file to save the EigenRays data.
+        """
+
+        data = {}
+        for ridx,rdepth in enumerate(self.receiver_depths):
+            data[f'receiver_depth_{ridx}'] = {
+                'receiver_depth' : rdepth,
+                'xs' : self.rs[ridx],
+                'ts' : self.ts[ridx],
+                'zs' : self.zs[ridx],
+                'ps' : self.ps[ridx],
+                'received_angles' : self.received_angles[ridx],
+                'launch_angles' : self.launch_angles[ridx],
+                'ray_id' : self.ray_id[ridx],
+                'n_bottom' : self.n_botts[ridx] if hasattr(self, 'n_botts') else np.nan,
+                'n_surface' : self.n_surfs[ridx] if hasattr(self, 'n_surfs') else np.nan,
+                'source_depth' : self.source_depths[ridx] if hasattr(self, 'source_depths') else np.nan,
+                'num_eigenrays' : self.num_eigenrays,
+                'num_eigenrays_found' : self.num_eigenrays_found,
+            }
+
+        # Save the dictionary to a .mat file
+        io.savemat(filename, {'eigenrays':data})
 
 __all__ = ['Ray','RayFan','EigenRays']

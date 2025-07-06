@@ -10,7 +10,7 @@ def shoot_rays(
         source_depth : float,
         source_range : float,
         launch_angles : np.array,
-        reciever_range : float,
+        receiver_range : float,
         num_range_save : int,
         environment : pr.OceanEnvironment2D,
         rtol = 1e-9,
@@ -29,12 +29,12 @@ def shoot_rays(
         array of source ranges (meters)
     launch_angles : np.array
         array of source angles (degrees)
-    reciever_range : float
-        reciever range (meters)
+    receiver_range : float
+        receiver range (meters)
     num_range_save : int
         The number of range values to save the ray state at. This value is unrelated to the numerical integration.
         The ray state value that is at the end bounds of the range integration is saved exactly.
-        All other values are interpolated to a range grid with `num_range_save` points between the source and reciever range.
+        All other values are interpolated to a range grid with `num_range_save` points between the source and receiver range.
     environment : pr.OceanEnvironment
         OceanEnvironment object specifying sound speed and bathymetry.
     rtol : float
@@ -81,7 +81,7 @@ def shoot_rays(
                     source_depth,
                     source_range,
                     launch_angle,
-                    reciever_range,
+                    receiver_range,
                     num_range_save,
                     environment,
                     rtol=rtol,
@@ -109,7 +109,7 @@ def shoot_rays(
             _shoot_single_ray_process,
             source_range=source_range,
             source_depth=source_depth,
-            reciever_range=reciever_range,
+            receiver_range=receiver_range,
             num_range_save=num_range_save,
             array_metadata=array_metadata,
             rtol=rtol,
@@ -119,7 +119,7 @@ def shoot_rays(
         with mp.Pool(n_processes) as pool:
             rays_ls = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Processing rays"))
 
-        ranges = np.linspace(source_range, reciever_range, num_range_save)
+        ranges = np.linspace(source_range, receiver_range, num_range_save)
 
         # unpack results
         rays_list = []
@@ -149,7 +149,7 @@ def shoot_ray(
     source_depth : float,
     source_range : float,
     launch_angle : float,
-    reciever_range : float,
+    receiver_range : float,
     num_range_save : int,
     environment : pr.OceanEnvironment2D,
     rtol = 1e-9,
@@ -167,12 +167,12 @@ def shoot_ray(
         array of source ranges (meters)
     launch_angle : np.array
         array of source angles (degrees), should be 1D with shape (k,)
-    reciever_range : float
-        reciever range (meters)
+    receiver_range : float
+        receiver range (meters)
     num_range_save : int
         The number of range values to save the ray state at. This value is unrelated to the numerical integration.
         The ray state value that is at the end bounds of the range integration is saved exactly.
-        All other values are interpolated to a range grid with `num_range_save` points between the source and reciever range.
+        All other values are interpolated to a range grid with `num_range_save` points between the source and receiver range.
     environment : pr.OceanEnvironment
         OceanEnvironment object specifying sound speed and bathymetry.
     rtol : float
@@ -199,14 +199,14 @@ def shoot_ray(
 
     # launch ray at angle theta
     sols, full_ray, n_bottom, n_surface = _shoot_ray_array(
-        y0, source_depth, source_range, reciever_range, cin, cpin, rin, zin, depths, depth_ranges, bottom_angles, rtol, terminate_backwards,debug
+        y0, source_depth, source_range, receiver_range, cin, cpin, rin, zin, depths, depth_ranges, bottom_angles, rtol, terminate_backwards,debug
     )
 
     if full_ray is None:
         return None
     else:
         # reinterpolate ray to range grid
-        range_save = np.linspace(source_range, reciever_range, num_range_save)
+        range_save = np.linspace(source_range, receiver_range, num_range_save)
         full_ray = _interpolate_ray(full_ray, range_save)
         ray = pr.Ray(full_ray[0,:], full_ray[1:,:], n_bottom, n_surface, launch_angle, source_depth)
     
@@ -216,7 +216,7 @@ def _shoot_ray_array(
     y0 : np.array,
     source_depth : float,
     source_range : float,
-    reciever_range : float,
+    receiver_range : float,
     cin : np.array,
     cpin : np.array,
     rin : np.array,
@@ -229,7 +229,7 @@ def _shoot_ray_array(
     debug : bool = True,
 ):
     """
-    Integrate single ray. Integration is terminated at bottom and surface reflections, and reflection angle is calculated and updated. Integration is looped until ray reaches reciever range. If there is an error in the integration, the function returns None, None, None.
+    Integrate single ray. Integration is terminated at bottom and surface reflections, and reflection angle is calculated and updated. Integration is looped until ray reaches receiver range. If there is an error in the integration, the function returns None, None, None.
     
     Environment specified by numpy arrays that are returned by {mod}`pr._unpack_envi()`.
 
@@ -241,8 +241,8 @@ def _shoot_ray_array(
         array of source depths (meters), should be 1D with shape (m,)
     source_range : np.array
         array of source ranges (meters), should be 1D with shape (n,)
-    reciever_range : float
-        reciever range (meters)
+    receiver_range : float
+        receiver range (meters)
     launch_angle : float
         launch angle of ray (degrees)
     cin : np.array (m,n)
@@ -293,12 +293,12 @@ def _shoot_ray_array(
     # set intermediate ray state to initial ray state
     y_intermediate = y0.copy()
 
-    while x_intermediate < reciever_range:
+    while x_intermediate < receiver_range:
 
         sol = _shoot_ray_segment(
             x_intermediate,
             y_intermediate,
-            reciever_range,
+            receiver_range,
             cin,
             cpin,
             rin,
@@ -364,7 +364,7 @@ def _shoot_single_ray_process(
         y0 : np.array,
         source_range : float,
         source_depth : float,
-        reciever_range : float,
+        receiver_range : float,
         num_range_save : int,
         array_metadata : dict,
         rtol = 1e-9,
@@ -381,12 +381,12 @@ def _shoot_single_ray_process(
         ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
     source_range : float
         initial ray, x position
-    reciever_range : float
+    receiver_range : float
         integration range end bound. starting point is x0
     num_range_save : int
         The number of range values to save the ray state at. This value is unrelated to the numerical integration.
         The ray state value that is at the end bounds of the range integration is saved exactly.
-        All other values are interpolated to a range grid with `num_range_save` points between the source and reciever range.
+        All other values are interpolated to a range grid with `num_range_save` points between the source and receiver range.
     array_metedata : dict
         dictionary containing metadata of shared memory arrays specificing environment. Calculated with `pr._init_shared_memory()`.
             cin, cpin, rin, zin, depths, depth_ranges, bottom_angle, x_eval
@@ -420,7 +420,7 @@ def _shoot_single_ray_process(
         y0,
         source_depth,
         source_range,
-        reciever_range,
+        receiver_range,
         cin,
         cpin,
         rin,
@@ -433,7 +433,7 @@ def _shoot_single_ray_process(
         debug,
     )
     
-    range_save = np.linspace(source_range, reciever_range, num_range_save)
+    range_save = np.linspace(source_range, receiver_range, num_range_save)
 
     if full_ray is None:
         return None
@@ -459,7 +459,7 @@ def _shoot_single_ray_process(
 def _shoot_ray_segment(
         x0 : float,
         y0 : np.array,
-        reciever_range : float,
+        receiver_range : float,
         cin : np.array,
         cpin : np.array,
         rin : np.array,
@@ -481,7 +481,7 @@ def _shoot_ray_segment(
         initial ray, x position
     y : np.array (3,)
         ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
-    reciever_range : float
+    receiver_range : float
         integration range end bound. starting point is x0
     cin : np.array (m,n)
         2D array of sound speed values
@@ -520,7 +520,7 @@ def _shoot_ray_segment(
     
     sol = scipy.integrate.solve_ivp(
         pr.derivsrd,
-        (x0,reciever_range),
+        (x0,receiver_range),
         y0,
         args = (cin, cpin, rin*1000, zin, depths, depth_ranges),
         events = events,

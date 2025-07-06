@@ -15,7 +15,7 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
     rays : pr.RayFan
         RayFan object containing sweep of rays to be used for finding eigenrays. Can be computed with `pr.shoot_rays()`.
     receiver_depths : array like
-        one dimensional array, or list containing reciever depths
+        one dimensional array, or list containing receiver depths
     source_depth : float
         source depth in meters
     source_range : float
