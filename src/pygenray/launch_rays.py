@@ -276,7 +276,7 @@ def _shoot_ray_array(
 
     # initialize loop parameters
     x_intermediate = source_range
-    full_ray = np.concat((np.array([source_range]), y0)).copy()
+    full_ray = np.concatenate((np.array([source_range]), y0)).copy()
     full_ray = np.expand_dims(full_ray, axis=1)
     sols = []
     n_surface = 0
