@@ -387,7 +387,7 @@ def ray_angle(
     """
 
     c = bilinear_interp(x, y[1], rin, zin, cin)
-    theta = np.degrees(np.asin(y[2] * c))
+    theta = np.degrees(np.arcsin(y[2] * c))
     return theta,c
 
 
