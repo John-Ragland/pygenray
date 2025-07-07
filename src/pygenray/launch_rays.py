@@ -5,6 +5,7 @@ import scipy
 import multiprocessing as mp
 from functools import partial
 from tqdm import tqdm
+import time
 
 def shoot_rays(
         source_depth : float,
@@ -101,47 +102,53 @@ def shoot_rays(
         # Create Shared Arrays
         array_metadata, shms = pr._init_shared_memory(cin, cpin, rin ,zin, depths, depth_ranges, bottom_angles)
 
-        # calculate initial ray parameter
-        c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
-        y0s = [np.array([0, source_depth, np.sin(np.radians(launch_angle))/c]) for launch_angle in launch_angles]
+        try:
+            # calculate initial ray parameter
+            c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
+            y0s = [np.array([0, source_depth, np.sin(np.radians(launch_angle))/c]) for launch_angle in launch_angles]
 
-        shoot_ray_part = partial(
-            _shoot_single_ray_process,
-            source_range=source_range,
-            source_depth=source_depth,
-            receiver_range=receiver_range,
-            num_range_save=num_range_save,
-            array_metadata=array_metadata,
-            rtol=rtol,
-            terminate_backwards=terminate_backwards
-        )
+            shoot_ray_part = partial(
+                _shoot_single_ray_process,
+                source_range=source_range,
+                source_depth=source_depth,
+                receiver_range=receiver_range,
+                num_range_save=num_range_save,
+                array_metadata=array_metadata,
+                rtol=rtol,
+                terminate_backwards=terminate_backwards
+            )
+            
+            with mp.Pool(n_processes) as pool:
+                rays_ls = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Processing rays"))
+
+            ranges = np.linspace(source_range, receiver_range, num_range_save)
+
+            # unpack results
+            rays_list = []
+            rays_list_idx = 0  # Add separate counter for rays_list
+            for k, single_ray in enumerate(rays_ls):
+                if single_ray is None:
+                    continue
+                else:
+                    # reinterpolate ray to range grid
+                    rays_list.append(single_ray)
+
+                    # _shoot_single_ray_process does not save launch angle in ray object
+                    # need to set manually here
+                    rays_list[rays_list_idx].launch_angle = launch_angles[k]  # Use separate counter
+                    rays_list_idx += 1  # Increment counter
+            
+            ray_fan = pr.RayFan(rays_list)
         
-        with mp.Pool(n_processes) as pool:
-            rays_ls = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Processing rays"))
-
-        ranges = np.linspace(source_range, receiver_range, num_range_save)
-
-        # unpack results
-        rays_list = []
-        rays_list_idx = 0  # Add separate counter for rays_list
-        for k, single_ray in enumerate(rays_ls):
-            if single_ray is None:
-                continue
-            else:
-                # reinterpolate ray to range grid
-                rays_list.append(single_ray)
-
-                # _shoot_single_ray_process does not save launch angle in ray object
-                # need to set manually here
-                rays_list[rays_list_idx].launch_angle = launch_angles[k]  # Use separate counter
-                rays_list_idx += 1  # Increment counter
-        
-        ray_fan = pr.RayFan(rays_list)
-
-        # close and unlink shared memory
-        for var in shms:
-            shms[var].unlink()
-            shms[var].close()
+        finally:
+            time.sleep(0.1)  # Ensure all processes have finished before cleaning up shared memory
+            # Always clean up shared memory, even if an error occurs
+            for var in shms:
+                try:
+                    shms[var].unlink()
+                    shms[var].close()
+                except:
+                    pass # ignore cleanup errors
 
         return ray_fan
 
@@ -405,54 +412,62 @@ def _shoot_single_ray_process(
         number of surface bounces
     """
 
-    # Access shared arrays
-    shared_arrays, existing_shms = pr._unpack_shared_memory(array_metadata)
+    try:
+        # Access shared arrays
+        shared_arrays, existing_shms = pr._unpack_shared_memory(array_metadata)
 
-    cin = shared_arrays['cin']
-    cpin = shared_arrays['cpin']
-    rin = shared_arrays['rin']
-    zin = shared_arrays['zin']
-    depths = shared_arrays['depths']
-    depth_ranges = shared_arrays['depth_ranges']
-    bottom_angles = shared_arrays['bottom_angle']
+        cin = shared_arrays['cin']
+        cpin = shared_arrays['cpin']
+        rin = shared_arrays['rin']
+        zin = shared_arrays['zin']
+        depths = shared_arrays['depths']
+        depth_ranges = shared_arrays['depth_ranges']
+        bottom_angles = shared_arrays['bottom_angle']
 
-    sols, full_ray, n_bottom, n_surface = _shoot_ray_array(
-        y0,
-        source_depth,
-        source_range,
-        receiver_range,
-        cin,
-        cpin,
-        rin,
-        zin,
-        depths,
-        depth_ranges,
-        bottom_angles,
-        rtol,
-        terminate_backwards,
-        debug,
-    )
-    
-    range_save = np.linspace(source_range, receiver_range, num_range_save)
-
-    if full_ray is None:
-        return None
-    else:
-        # reinterpolate ray to range grid
-
-        full_ray_interpolated = _interpolate_ray(full_ray, range_save)  
-
-        ray = pr.Ray(
-            full_ray_interpolated[0,:],
-            full_ray_interpolated[1:,:],
-            n_bottom,
-            n_surface,
-            source_depth=source_depth
+        sols, full_ray, n_bottom, n_surface = _shoot_ray_array(
+            y0,
+            source_depth,
+            source_range,
+            receiver_range,
+            cin,
+            cpin,
+            rin,
+            zin,
+            depths,
+            depth_ranges,
+            bottom_angles,
+            rtol,
+            terminate_backwards,
+            debug,
         )
+        
+        range_save = np.linspace(source_range, receiver_range, num_range_save)
 
-    # unlink all shared arrays after process is done
-    for var in existing_shms:
-        existing_shms[var].close()
+        if full_ray is None:
+            return None
+        else:
+            # reinterpolate ray to range grid
+
+            full_ray_interpolated = _interpolate_ray(full_ray, range_save)  
+
+            ray = pr.Ray(
+                full_ray_interpolated[0,:],
+                full_ray_interpolated[1:,:],
+                n_bottom,
+                n_surface,
+                source_depth=source_depth
+            )
+    except Exception as e:
+        if debug:
+            print(f'Error in ray integration: {e}')
+        return None
+    finally:
+        # Always close shared memory handles, even with error
+        for var in existing_shms:
+            try:
+                existing_shms[var].close()
+            except:
+                pass # ignore cleanup errors
 
     return ray
 
