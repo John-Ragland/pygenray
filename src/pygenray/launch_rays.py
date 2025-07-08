@@ -236,7 +236,7 @@ def _shoot_ray_array(
     debug : bool = True,
 ):
     """
-    Integrate single ray. Integration is terminated at bottom and surface reflections, and reflection angle is calculated and updated. Integration is looped until ray reaches receiver range. If there is an error in the integration, the function returns None, None, None.
+    Integrate single ray. Integration is terminated at bottom and surface reflections, and reflection angle is calculated and updated. Integration is looped until ray reaches receiver range. If there is an error in the integration, the function returns None, None, None, None.
     
     Environment specified by numpy arrays that are returned by {mod}`pr._unpack_envi()`.
 
@@ -322,22 +322,28 @@ def _shoot_ray_array(
         full_ray = np.append(full_ray, np.vstack((sol.t, sol.y)), axis=1)
 
         # if end of integration is reached, end loop
-        if sol.message == 'The solver successfully reached the end of the integration interval.':
+        if sol.status == 0:
             break
+        elif sol.status == -1:
+            if debug:
+                print(f'Integration failed with message: {sol.message}')
+            return None, None, None, None
 
         y_intermediate = sol.y[:,-1]
 
-        # Check if bounce event occurred and update x_intermediate accordingly
+        # Bounce Event
         if len(sol.t_events[0]) > 0 or len(sol.t_events[1]) > 0:
-            # An event occurred, use the event time as the new range
+            # Bounce event occurred, use the event time as the new range
             if len(sol.t_events[0]) > 0:  # Surface event
                 x_intermediate = sol.t_events[0][0]
             elif len(sol.t_events[1]) > 0:  # Bottom event  
                 x_intermediate = sol.t_events[1][0]
-
-        else:
-            # No event, use the final integration point
-            x_intermediate = sol.t[-1]
+        
+        # Vertical Ray
+        elif len(sol.t_events[2]) > 0:  # Vertical ray event
+            if debug:
+                print(f'ray is vertical at x={sol.t[-1]}, y={sol.y[1,-1]}, terminating integration')
+            return None, None, None, None
 
         # calculate ray angle and sound speed at ray state
         theta,c = pr.ray_angle(x_intermediate, y_intermediate, cin, rin, zin)
@@ -528,11 +534,15 @@ def _shoot_ray_segment(
     bottom_event.terminal = True
     bottom_event.direction = 1
 
+    vertical_ray = pr.vertical_ray
+    vertical_ray.terminal = True
+
     events = (
         surface_event,
         bottom_event,
+        vertical_ray,
     )
-    
+
     sol = scipy.integrate.solve_ivp(
         pr.derivsrd,
         (x0,receiver_range),
