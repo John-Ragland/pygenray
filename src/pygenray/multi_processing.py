@@ -1,5 +1,7 @@
 from multiprocessing import shared_memory
 import numpy as np
+import uuid
+import os
 
 def _init_shared_memory(
         cin,
@@ -35,24 +37,29 @@ def _init_shared_memory(
     shms : dict
         Dictionary containing shared memory objects for each array
     '''
-    shared_array_names = [
+
+    # Create unique id, uses PID and shotened UUID to handle SLURM better
+    unique_id = f'{os.getpid()}_{uuid.uuid4().hex[:8]}'
+
+    shared_array_name_bases = [
         'cin','cpin','rin','zin','depths','depth_ranges','bottom_angle'
     ]
+
+    shared_array_names = [f'{name}_{unique_id}' for name in shared_array_name_bases]
+
     shared_arrays_np = {
-        'cin':cin,
-        'cpin':cpin,
-        'rin':rin,
-        'zin':zin,
-        'depths':depths,
-        'depth_ranges':depth_ranges,
-        'bottom_angle':bottom_angle,
+        f'cin_{unique_id}':cin,
+        f'cpin_{unique_id}':cpin,
+        f'rin_{unique_id}':rin,
+        f'zin_{unique_id}':zin,
+        f'depths_{unique_id}':depths,
+        f'depth_ranges_{unique_id}':depth_ranges,
+        f'bottom_angle_{unique_id}':bottom_angle,
     }
 
     shms = {}
     shared_arrays = {}
     array_metadata = {}
-    # clean up shared arrays
-    _cleanup_shared_memory(shared_array_names)
 
     for var in shared_arrays_np:
         shms[var] = shared_memory.SharedMemory(create=True, size=shared_arrays_np[var].nbytes, name=var)
@@ -64,27 +71,6 @@ def _init_shared_memory(
         }
     
     return array_metadata, shms
-
-def _cleanup_shared_memory(names):
-    """
-    Clean up existing shared memory objects by names
-    
-    Parameters
-    ----------
-    names : list
-        names of shared memory objects to clean up
-    """
-    for name in names:
-        try:
-            existing_shm = shared_memory.SharedMemory(name=name)
-            existing_shm.close()
-            existing_shm.unlink()
-            #print(f"Cleaned up existing shared memory: {name}")
-        except FileNotFoundError:
-            # Memory doesn't exist, which is fine
-            pass
-        except Exception as e:
-            print(f"Error cleaning up {name}: {e}")
 
 def _unpack_shared_memory(shared_array_metadata):
     """
@@ -98,23 +84,33 @@ def _unpack_shared_memory(shared_array_metadata):
     Returns
     -------
     shared_arrays : dict
-        Dictionary containing unpacked shared memory arrays
+        Dictionary containing unpacked shared memory arrays with base names as keys
     existing_shms : dict
-        Dictionary containing existing shared memory objects
+        Dictionary containing existing shared memory objects with unique names as keys
     """
-    shared_array_names = [
-        'cin','cpin','rin','zin','depths','depth_ranges','bottom_angle'
-    ]
 
     existing_shms = {}
     shared_arrays = {}
-    for var in shared_array_names:
+    
+    # Define the mapping from base names to what we expect
+    base_names = ['cin', 'cpin', 'rin', 'zin', 'depths', 'depth_ranges', 'bottom_angle']
+    
+    for var in shared_array_metadata:
+        # Access shared memory with the unique name
         existing_shms[var] = shared_memory.SharedMemory(name=var)
-
-        shared_arrays[var] = np.ndarray(
+        
+        # Create numpy array
+        array = np.ndarray(
             shared_array_metadata[var]['shape'],
-            dtype=shared_array_metadata[var]['dtype'], buffer=existing_shms[var].buf)
+            dtype=shared_array_metadata[var]['dtype'], 
+            buffer=existing_shms[var].buf)
+        
+        # Map back to base name for easy access
+        for base_name in base_names:
+            if var.startswith(f'{base_name}_'):
+                shared_arrays[base_name] = array
+                break
         
     return shared_arrays, existing_shms
 
-__all__ = ['_init_shared_memory', '_cleanup_shared_memory', '_unpack_shared_memory']
+__all__ = ['_init_shared_memory', '_unpack_shared_memory']
