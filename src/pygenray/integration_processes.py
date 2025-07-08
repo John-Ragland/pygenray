@@ -258,7 +258,7 @@ def vertical_ray(x, y, cin, cpin, rin, zin, depths, depth_ranges):
     """Vertical ray event: trigger when ray is vertical (θ = 90 degrees)"""
 
     ray_theta, _ = ray_angle(x,y,cin, rin, zin)
-    if np.abs(ray_theta) > 89.9: # within 0.1 degree
+    if np.abs(ray_theta) > (90-1e-3): # within 0.001 degree
         return 1.0
     else:
         return -1.0
