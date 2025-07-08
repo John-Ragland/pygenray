@@ -236,7 +236,7 @@ def _shoot_ray_array(
     debug : bool = True,
 ):
     """
-    Integrate single ray. Integration is terminated at bottom and surface reflections, and reflection angle is calculated and updated. Integration is looped until ray reaches receiver range. If there is an error in the integration, the function returns None, None, None.
+    Integrate single ray. Integration is terminated at bottom and surface reflections, and reflection angle is calculated and updated. Integration is looped until ray reaches receiver range. If there is an error in the integration, the function returns None, None, None, None.
     
     Environment specified by numpy arrays that are returned by {mod}`pr._unpack_envi()`.
 
@@ -314,6 +314,13 @@ def _shoot_ray_array(
             depth_ranges,
             rtol=rtol,
         )
+
+        # Skip ray if integration segment failed (θ= +- 90)
+        if sol is None:
+            if debug:
+                print(f'Ray integration segment failed at x={x_intermediate}, y={y_intermediate}.')
+            return None, None, None, None
+
 
         if len(sol.t) == 0:
             raise Exception('Integration segment failed, no points returned.')
@@ -532,16 +539,20 @@ def _shoot_ray_segment(
         surface_event,
         bottom_event,
     )
-    
-    sol = scipy.integrate.solve_ivp(
-        pr.derivsrd,
-        (x0,receiver_range),
-        y0,
-        args = (cin, cpin, rin, zin, depths, depth_ranges),
-        events = events,
-        rtol = rtol,
-        **kwargs
-    )
+    try:
+        sol = scipy.integrate.solve_ivp(
+            pr.derivsrd,
+            (x0,receiver_range),
+            y0,
+            args = (cin, cpin, rin, zin, depths, depth_ranges),
+            events = events,
+            rtol = rtol,
+            **kwargs
+        )
+    except ZeroDivisionError as e:
+        if kwargs.get('debug', False):
+            print(f'ZeroDivisionError in ray integration: {e}')
+        return None
 
     return sol
 
