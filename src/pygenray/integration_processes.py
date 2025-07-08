@@ -225,89 +225,6 @@ def linear_interp(x, xin, yin):
     return y_interp
 
 @numba.njit(fastmath=True, cache=True)
-def bottom_bounce_archive(x,y,cin, cpin, rin, zin, depths, depth_ranges):
-    """
-    Bottom bounce event. Crosses zero at bottom reflection and is used to trigger end of ray integration segment, so that reflection can be handled.
-    A tolerance of 1 mm (where the ray event triggers 1mm below the bottom)
-
-    Parameters
-    ----------
-    x : float
-        horizontal range (meters)
-    y : np.array (3,)
-        ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
-    cin : np.array (m,n)
-        2D array of sound speed values
-    cpin : np.array (m,n)
-        2D array of dc/dz
-    rin : np.array (m,)
-        range coordinate for c arrays
-    zin : np.array (n,)
-        depth coordinate for c arrays
-    depth : np.array(m,)
-        array of depths (meters), should be 1D with shape (m,)
-    depth_ranges : np.array(m,)
-        array of depth ranges (meters), should be 1D with shape (m,)
-
-    Returns
-    -------
-    value : np.array (2,)
-        bounce event values for surface and bottom
-    isterminal : np.array (2,)
-        boolean array indicating if the event should stop the integration
-    direction : np.array (2,)
-        direction of the event, 1 for increasing, -1 for decreasing
-    """
-    tol = 1e-2 # 1 cm
-
-    water_depth = linear_interp(x, depth_ranges, depths)
-    ray_depth = y[1]
-
-    # crosses zero for bottom reflection
-    bottom_distance = ray_depth-water_depth
-
-    # zero if within bottom tolerance
-    if np.abs(bottom_distance) < 2:
-        bottom_distance = 0
-
-    return bottom_distance 
-
-@numba.njit(fastmath=True, cache=True)
-def surface_bounce_archive(x,y,cin, cpin, rin, zin, depths, depth_ranges):
-    """
-    Parameters
-    ----------
-    x : float
-        horizontal range (meters)
-    y : np.array (3,)
-        ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
-    cin : np.array (m,n)
-        2D array of sound speed values
-    cpin : np.array (m,n)
-        2D array of dc/dz
-    rin : np.array (m,)
-        range coordinate for c arrays
-    zin : np.array (n,)
-        depth coordinate for c arrays
-    depth : np.array(m,)
-        array of depths (meters), should be 1D with shape (m,)
-    depth_ranges : np.array(m,)
-        array of depth ranges (meters), should be 1D with shape (m,)
-
-    Returns
-    -------
-    value : np.array (2,)
-        bounce event values for surface and bottom
-    isterminal : np.array (2,)
-        boolean array indicating if the event should stop the integration
-    direction : np.array (2,)
-        direction of the event, 1 for increasing, -1 for decreasing
-    """
-    tol = 1e-2 # 1 cm
-    ray_depth = y[1] - tol
-    return ray_depth
-
-@numba.njit(fastmath=True, cache=True)
 def surface_bounce(x, y, cin, cpin, rin, zin, depths, depth_ranges):
     """Surface event: only trigger when approaching surface from below"""
     ray_depth = y[1]
@@ -335,6 +252,17 @@ def bottom_bounce(x, y, cin, cpin, rin, zin, depths, depth_ranges):
         return 1.0
     else:
         return -1.0
+
+@numba.njit(fastmath=True, cache=True)
+def vertical_ray(x, y, cin, cpin, rin, zin, depths, depth_ranges):
+    """Vertical ray event: trigger when ray is vertical (θ = 90 degrees)"""
+
+    ray_theta, _ = ray_angle(x,y,cin, rin, zin)
+    if np.abs(ray_theta) > 89.9: # within 0.1 degree
+        return 1.0
+    else:
+        return -1.0
+    
 
 @numba.njit(fastmath=True, cache=True)
 def ray_bounding_box_event(x,y,cin, cpin, rin, zin, depths, depth_ranges):
@@ -399,5 +327,6 @@ __all__ = [
     'ray_angle',
     'bilinear_interp',
     'linear_interp',
+    'vertical_ray',
 ]
 
