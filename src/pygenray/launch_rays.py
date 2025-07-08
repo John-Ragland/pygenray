@@ -537,7 +537,7 @@ def _shoot_ray_segment(
         pr.derivsrd,
         (x0,receiver_range),
         y0,
-        args = (cin, cpin, rin*1000, zin, depths, depth_ranges),
+        args = (cin, cpin, rin, zin, depths, depth_ranges),
         events = events,
         rtol = rtol,
         **kwargs
