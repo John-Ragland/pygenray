@@ -111,6 +111,10 @@ def _find_single_eigenray(args):
     while not within_tolerance:
         ray = pr.shoot_ray(source_depth, source_range, bisection_theta, receiver_range, num_range_save, environment)
 
+        if ray is None:
+            print(f'Failed to find eigen ray for receiver depth {receiver_depth} [m] and approximate launch angle {bisection_theta} [m] ray θ = 90°')
+            return None
+        
         if np.abs(ray.z[-1] - receiver_depth) < ztol:
             return ray
 
