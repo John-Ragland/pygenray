@@ -406,7 +406,7 @@ class EigenRays:
                     environment.sound_speed.depth.values
                 )
                 received_angles_single.append(theta)
-                ray_id_single = np.sum(np.diff(np.sign(eray_fan.ps[eray_idx,:])) != 0) * np.sign(eray_fan.thetas[eray_idx])
+                ray_id_single = np.sum(np.diff(np.sign(eray_fan.ps[eray_idx,:])) != 0) * (-np.sign(eray_fan.thetas[eray_idx]))
                 ray_ids.append(ray_id_single)
             self.received_angles[ridx] = np.array(received_angles_single)
             self.launch_angles[ridx] = eray_fan.thetas
