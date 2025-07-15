@@ -17,7 +17,8 @@ def shoot_rays(
         rtol = 1e-9,
         terminate_backwards : bool = True,
         n_processes : int = None,
-        debug : bool = True
+        debug : bool = True,
+        flatearth : bool = True
 ):
     '''
     Integrate rays for given environment and launch angles. Different launch angle initial conditions are mapped to available CPUS.
@@ -46,6 +47,8 @@ def shoot_rays(
         number of processes to use, Default of None (mp.cpu_count)
     debug : bool
         whether to print debug information, default is False
+    flatearth : bool
+        whether to transform environment to flat earth coordinates. Default is True.
 
     Returns
     -------
@@ -62,7 +65,7 @@ def shoot_rays(
     # set up initial conditions for ray variable
 
     ## unpack environment object
-    cin, cpin, rin, zin, depths, depth_ranges, bottom_angles = _unpack_envi(environment)
+    cin, cpin, rin, zin, depths, depth_ranges, bottom_angles = _unpack_envi(environment, flatearth=flatearth)
     
     # check that coordinates are monotonically increasing
     if not (np.all(np.diff(rin) >= 0)):
@@ -161,7 +164,8 @@ def shoot_ray(
     environment : pr.OceanEnvironment2D,
     rtol = 1e-9,
     terminate_backwards : bool = True,
-    debug : bool = True
+    debug : bool = True,
+    flatearth : bool = True
 ):
     """
     Integrate rays for given environment and launch angles. Different launch angle initial conditions are mapped to available CPUS.
@@ -188,9 +192,16 @@ def shoot_ray(
         whether to terminate ray if it bounces backwards)
     debug : bool
         whether to print debug information, default is False
+    flatearth : bool
+        whether to transform environment to flat earth coordinates. Default is True.
+        
+    Returns 
+    -------
+    ray : pr.Ray
+        pr.Ray object
 
     """
-    cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles = _unpack_envi(environment)
+    cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles = _unpack_envi(environment, flatearth=flatearth)
 
     # check that coordinates are monotonically increasing
     if not (np.all(np.diff(rin) >= 0)):
@@ -555,19 +566,28 @@ def _shoot_ray_segment(
 
     return sol
 
-def _unpack_envi(environment):
+def _unpack_envi(environment, flatearth=True):
 
-    # chech that environment.sound_speed_fe exists
-    if not hasattr(environment, 'sound_speed_fe'):
-        raise Exception('Flat earth transformation has not been applied. Set `flat_earth_transform=True` when creating the OceanEnvironment2D object.')
-    
-    cin = np.array(environment.sound_speed_fe.values)
-    cpin = np.array(environment.sound_speed_fe.differentiate('depth').values)
-    rin = np.array(environment.sound_speed_fe.range.values)
-    zin = np.array(environment.sound_speed_fe.depth.values)
-    depths = np.array(environment.bathymetry_fe.values)
-    depth_ranges = np.array(environment.bathymetry_fe.range.values)
-    bottom_angles = np.array(environment.bottom_angle)
+    if flatearth:
+        # chech that environment.sound_speed_fe exists
+        if not hasattr(environment, 'sound_speed_fe'):
+            raise Exception('Flat earth transformation has not been applied. Set `flat_earth_transform=True` when creating the OceanEnvironment2D object.')
+        
+        cin = np.array(environment.sound_speed_fe.values)
+        cpin = np.array(environment.sound_speed_fe.differentiate('depth').values)
+        rin = np.array(environment.sound_speed_fe.range.values)
+        zin = np.array(environment.sound_speed_fe.depth.values)
+        depths = np.array(environment.bathymetry_fe.values)
+        depth_ranges = np.array(environment.bathymetry_fe.range.values)
+        bottom_angles = np.array(environment.bottom_angle)
+    else:
+        cin = np.array(environment.sound_speed.values)
+        cpin = np.array(environment.sound_speed.differentiate('depth').values)
+        rin = np.array(environment.sound_speed.range.values)
+        zin = np.array(environment.sound_speed.depth.values)
+        depths = np.array(environment.bathymetry.values)
+        depth_ranges = np.array(environment.bathymetry.range.values)
+        bottom_angles = np.array(environment.bottom_angle)
 
     return cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles
 
