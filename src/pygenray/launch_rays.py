@@ -90,7 +90,8 @@ def shoot_rays(
                     environment,
                     rtol=rtol,
                     terminate_backwards=terminate_backwards,
-                    debug=debug
+                    debug=debug,
+                    flatearth=flatearth
                 )
             )
         # shoot_ray automatically saves launch angle to ray object
