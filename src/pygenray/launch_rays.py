@@ -60,6 +60,9 @@ def shoot_rays(
         number of surface bounces
     '''
 
+    # flip launch angles to match sign convention
+    launch_angles = -launch_angles
+
     if n_processes == None:
         n_processes = mp.cpu_count()
     # set up initial conditions for ray variable
@@ -202,6 +205,10 @@ def shoot_ray(
         pr.Ray object
 
     """
+
+    # flip launch angle to match sign convention
+    launch_angle = -launch_angle
+    
     cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles = _unpack_envi(environment, flatearth=flatearth)
 
     # check that coordinates are monotonically increasing
