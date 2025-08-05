@@ -226,7 +226,7 @@ def shoot_ray(
     else:
         # reinterpolate ray to range grid
         range_save = np.linspace(source_range, receiver_range, num_range_save)
-        full_ray = _interpolate_ray(full_ray, range_save)
+        full_ray = _interpolate_ray(sols, range_save)
         ray = pr.Ray(full_ray[0,:], full_ray[1:,:], n_bottom, n_surface, launch_angle, source_depth)
     
         return ray
@@ -466,7 +466,7 @@ def _shoot_single_ray_process(
         else:
             # reinterpolate ray to range grid
 
-            full_ray_interpolated = _interpolate_ray(full_ray, range_save)  
+            full_ray_interpolated = _interpolate_ray(sols, range_save)  
 
             ray = pr.Ray(
                 full_ray_interpolated[0,:],
@@ -535,6 +535,13 @@ def _shoot_ray_segment(
         relative tolerance for the ODE solver, default is 1e-6
     debug : bool
         whether to print debug information, default is False
+    **kwargs : dict
+        kwargs passed to {mod}`scipy.integrate.solve_ivp`.
+
+    Returns
+    -------
+    sol : scipy.integrate.OdeResult
+        solution to integration segment.
     """
 
     # set up surface and bottom bounce events
@@ -562,6 +569,7 @@ def _shoot_ray_segment(
         args = (cin, cpin, rin, zin, depths, depth_ranges),
         events = events,
         rtol = rtol,
+        dense_output=True,
         **kwargs
     )
 
@@ -592,43 +600,43 @@ def _unpack_envi(environment, flatearth=True):
 
     return cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles
 
+
 def _interpolate_ray(
-        full_ray : np.array,
+        sols : list,
         range_save : np.array
 ):
     """
-    Reinterpolate ray to range grid.
+    Given list of {mod}`scipy.integrate._ivp.ivp.OdeResult` solutions, corresponding to integrated ray segments
+    interpolate ray state to specfied range grid using the order of the numerical solver (using `dense_output=True` in `scipy.integrate.solve_ivp`).
 
     Parameters
     ----------
-    full_ray : np.array (4,n)
-        2D array of ray state at each x_eval point, shape (4, n_eval), where n_eval is the number of evaluation points
+    sols : list
+        List of {mod}`scipy.integrate._ivp.ivp.OdeResult` solutions, corresponding to integrated ray segments
     range_save : np.array (m,)
         array of range values to save the ray state at
 
     Returns
     -------
-    full_ray_interpolated : np.array (4,m)
-        2D array of ray state at each range_save point, shape (4, m), where m is the number of range values to save
+    full_ray_state : np.array (4,m)
+        4D array of ray state at each range_save point first dimension corresponds to [range, time, depth, pz], m is the number of range values to save
     """
-    # Remove repeated values of range for ray variables
-    _, unique_indices = np.unique(full_ray[0, :], return_index=True)
-    mask = np.ones(full_ray.shape[1], dtype=bool)
-    mask[unique_indices] = False
-    full_ray_filtered = full_ray[:, ~mask]
 
-    # Save range integration bound for ray variable
-    full_ray_end = full_ray[:,-1:]
-    
-    # Interpolate ray variables to range grid
-    full_ray_interpolator = scipy.interpolate.interp1d(full_ray_filtered[0,], full_ray_filtered, axis=1, kind='linear') 
-    #full_ray_interpolator = scipy.interpolate.CubicSpline(full_ray_filtered[0,], full_ray_filtered, axis=1) 
-    full_ray_interpolated = full_ray_interpolator(range_save[:-1])
+    full_ray = np.ones((3, len(range_save)-1))*np.nan
 
-    # Add last range value to ray variable
-    full_ray_interpolated = np.concatenate((full_ray_interpolated, full_ray_end), axis=1)
+    for k, sol in enumerate(sols):
+        idx1 = np.argmin(np.abs(range_save - sol.t[0]))
+        idx2 = np.argmin(np.abs(range_save - sol.t[-1]))
 
-    return full_ray_interpolated
+        full_ray[:, idx1:idx2] = sol.sol(range_save[idx1:idx2])
+
+    # Append final ray state to full_ray
+    full_ray = np.concatenate((full_ray, np.expand_dims(sols[-1].y[:,-1], axis=1)), axis=1)
+
+    # Append range values to full_ray
+    full_ray_state = np.concatenate((np.expand_dims(range_save, axis=0), full_ray), axis=0)
+
+    return full_ray_state
 
 
 __all__ = ['_shoot_ray_segment', 'shoot_rays', 'shoot_ray','_shoot_single_ray_process', '_unpack_envi', '_shoot_ray_array']
