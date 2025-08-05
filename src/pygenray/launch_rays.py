@@ -61,6 +61,8 @@ def shoot_rays(
     '''
 
     # flip launch angles to match sign convention
+    if type(launch_angles) is list:
+        launch_angles = np.array(launch_angles)
     launch_angles = -launch_angles
 
     if n_processes == None:
