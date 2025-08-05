@@ -262,7 +262,6 @@ def vertical_ray(x, y, cin, cpin, rin, zin, depths, depth_ranges):
         return 1.0
     else:
         return -1.0
-    
 
 @numba.njit(fastmath=True, cache=True)
 def ray_bounding_box_event(x,y,cin, cpin, rin, zin, depths, depth_ranges):
