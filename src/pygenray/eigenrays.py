@@ -55,8 +55,8 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
         # compute bisection launch angles
         z1s = rays.zs[bracket_idxs[:,0].astype(int),-1]
         z2s = rays.zs[bracket_idxs[:,1].astype(int),-1]
-        theta1s = rays.thetas[bracket_idxs[:,0].astype(int)]
-        theta2s = rays.thetas[bracket_idxs[:,1].astype(int)]
+        theta1s = -rays.thetas[bracket_idxs[:,0].astype(int)]
+        theta2s = -rays.thetas[bracket_idxs[:,1].astype(int)]
 
         bisection_thetas = theta1s + (theta2s - theta1s) * ((receiver_depth - z1s) / (z2s - z1s))
         
