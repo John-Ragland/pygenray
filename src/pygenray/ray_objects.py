@@ -22,7 +22,7 @@ class Ray:
         r : float
             Range value for ray
         y : np.array
-            ray variables (3,) [travel time, depth, ray parameter (sin(θ)/c)]
+            ray variables (3,:) [travel time, depth, ray parameter (sin(θ)/c)]
         launch_angle : float
             launch angle of ray
         n_bottom : int
@@ -46,8 +46,8 @@ class Ray:
 
         self.r = r
         self.t = y[0,:]
-        self.z = y[1,:]
-        self.p = y[2,:]
+        self.z = -y[1,:] # saving with negative z convention
+        self.p = -y[2,:] # saving with negative z convention
         self.n_bottom = n_bottom
         self.n_surface = n_surface
         if launch_angle is not None:
@@ -66,7 +66,7 @@ class Ray:
         plt.plot(self.r, self.z, **kwargs)
         plt.xlabel('time [s]')
         plt.ylabel('depth [m]')
-        plt.ylim([self.z.max(), self.z.min()])
+        plt.ylim([self.z.min(), self.z.max()])
         return
 
 
@@ -153,7 +153,7 @@ class RayFan:
         plt.scatter(x=self.ts[:,range_idx], y=self.zs[:,range_idx], **scatter_kwargs)
 
 
-        plt.ylim([self.zs.max(), self.zs.min()])
+        plt.ylim([self.zs.min(), self.zs.max()])
         plt.colorbar(label='launch angle [degrees]')
         plt.xlabel('time [s]')
         plt.ylabel('depth [m]')
@@ -176,7 +176,7 @@ class RayFan:
 
         plt.xlabel('range [m]')
         plt.ylabel('depth [m]')
-        plt.ylim([self.zs.max(), self.zs.min()])
+        plt.ylim([self.zs.min(), self.zs.max()])
         plt.title('Ray Fan')
 
         return
@@ -405,8 +405,8 @@ class EigenRays:
                     environment.sound_speed.range.values,
                     environment.sound_speed.depth.values
                 )
-                received_angles_single.append(-theta)
-                ray_id_single = np.sum(np.diff(np.sign(eray_fan.ps[eray_idx,:])) != 0) * (-np.sign(eray_fan.thetas[eray_idx]))
+                received_angles_single.append(theta)
+                ray_id_single = np.sum(np.diff(np.sign(eray_fan.ps[eray_idx,:])) != 0) * (np.sign(eray_fan.thetas[eray_idx]))
                 ray_ids.append(ray_id_single)
             self.received_angles[ridx] = np.array(received_angles_single)
             self.launch_angles[ridx] = eray_fan.thetas
@@ -447,7 +447,7 @@ class EigenRays:
         plt.xlabel('range [m]')
         plt.ylabel('depth [m]')
         plt.title('Eigen Rays')
-        plt.ylim([self.zs[ridx].max(), self.zs[ridx].min()])
+        plt.ylim([self.zs[ridx].min(), self.zs[ridx].max()])
 
     def save_mat(self, filename):
         """

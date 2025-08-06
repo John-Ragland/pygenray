@@ -45,7 +45,7 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
     for rd_idx, receiver_depth in enumerate(tqdm(receiver_depths, desc="Finding Eigenrays")):
         ## get initial bracketing rays
         # get indices before sign changes
-        depth_sign = np.sign(rays.zs[:,-1] - receiver_depth)
+        depth_sign = np.sign(rays.zs[:,-1] + receiver_depth)
         sign_change = np.diff(depth_sign)
         bracket_idxs_start = np.where(sign_change)[0]
 
@@ -53,12 +53,12 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
         bracket_idxs = np.column_stack([bracket_idxs_start, bracket_idxs_start + 1])
 
         # compute bisection launch angles
-        z1s = rays.zs[bracket_idxs[:,0].astype(int),-1]
-        z2s = rays.zs[bracket_idxs[:,1].astype(int),-1]
-        theta1s = -rays.thetas[bracket_idxs[:,0].astype(int)]
-        theta2s = -rays.thetas[bracket_idxs[:,1].astype(int)]
-
-        bisection_thetas = theta1s + (theta2s - theta1s) * ((receiver_depth - z1s) / (z2s - z1s))
+        z1s = rays.zs[bracket_idxs[:,1].astype(int),-1]
+        z2s = rays.zs[bracket_idxs[:,0].astype(int),-1]
+        theta1s = rays.thetas[bracket_idxs[:,1].astype(int)]
+        theta2s = rays.thetas[bracket_idxs[:,0].astype(int)]
+        
+        bisection_thetas =  theta1s - (z1s + receiver_depth) * (theta2s - theta1s) / (z2s - z1s)
         
         num_eigenrays[receiver_depth] = len(bisection_thetas)
 
@@ -106,16 +106,17 @@ def _find_single_eigenray(args):
     
     iter_count = 0
     within_tolerance = False
-    
+
     # Bisection root finding loop
     while not within_tolerance:
-        ray = pr.shoot_ray(source_depth, source_range, bisection_theta, receiver_range, num_range_save, environment)
+
+        ray = pr.shoot_ray(source_depth, source_range, -bisection_theta, receiver_range, num_range_save, environment)
 
         if ray is None:
             print(f'Failed to find eigen ray for receiver depth {receiver_depth} [m] and approximate launch angle {bisection_theta} [m] ray θ = 90°')
             return None
         
-        if np.abs(ray.z[-1] - receiver_depth) < ztol:
+        if np.abs(ray.z[-1] + receiver_depth) < ztol:
             return ray
 
         if ray.z[-1] < receiver_depth:
@@ -129,7 +130,7 @@ def _find_single_eigenray(args):
             theta1 = bisection_theta
             theta2 = theta2
         
-        bisection_theta = theta1 + (theta2 - theta1) * ((receiver_depth - z1) / (z2 - z1))
+        bisection_theta =  theta1 - (z1 + receiver_depth) * (theta2 - theta1) / (z2 - z1)
 
         if iter_count > max_iter:
             print(f'Failed to find eigen ray for receiver depth {receiver_depth} [m] and approximate launch angle {bisection_theta} [m] after {max_iter} iterations.')
