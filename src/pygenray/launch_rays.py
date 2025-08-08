@@ -637,7 +637,11 @@ def _interpolate_ray(
         idx1 = np.argmin(np.abs(range_save - sol.t[0]))
         idx2 = np.argmin(np.abs(range_save - sol.t[-1]))
 
+        if idx1 == idx2:
+            continue # Skip if no range points exist in segment
+        
         full_ray[:, idx1:idx2] = sol.sol(range_save[idx1:idx2])
+
 
     # Append final ray state to full_ray
     full_ray = np.concatenate((full_ray, np.expand_dims(sols[-1].y[:,-1], axis=1)), axis=1)
