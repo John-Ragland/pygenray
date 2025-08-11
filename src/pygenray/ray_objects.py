@@ -379,6 +379,8 @@ class EigenRays:
         self.ts = {}
         self.zs = {}
         self.ps = {}
+        self.n_botts = {}
+        self.n_surfs = {}
         self.received_angles = {}
         self.launch_angles = {}
         self.ray_id = {}
@@ -393,6 +395,8 @@ class EigenRays:
             self.ts[ridx] = eray_fan.ts
             self.zs[ridx] = eray_fan.zs
             self.ps[ridx] = eray_fan.ps
+            self.n_botts[ridx] = eray_fan.n_botts
+            self.n_surfs[ridx] = eray_fan.n_surfs
 
             received_angles_single = []
             ray_ids = []
@@ -407,7 +411,11 @@ class EigenRays:
                 )
                 received_angles_single.append(theta)
                 ray_id_single = np.sum(np.diff(np.sign(eray_fan.ps[eray_idx,:])) != 0) * (np.sign(eray_fan.thetas[eray_idx]))
-                ray_ids.append(ray_id_single)
+                if eray_fan.n_botts[eray_idx] == 0 and eray_fan.n_surfs[eray_idx] == 0:
+                    boundary_flag = ''
+                else:
+                    boundary_flag = 'b'
+                ray_ids.append(f'{ray_id_single}{boundary_flag}')
             self.received_angles[ridx] = np.array(received_angles_single)
             self.launch_angles[ridx] = eray_fan.thetas
             self.ray_id[ridx] = np.array(ray_ids)
