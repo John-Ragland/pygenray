@@ -40,7 +40,7 @@ def shoot_rays(
     environment : pr.OceanEnvironment
         OceanEnvironment object specifying sound speed and bathymetry.
     rtol : float
-        relative tolerance for the ODE solver, default is 1e-6
+        relative tolerance for the ODE solver, default is 1e-9
     terminate_backwards : bool
         whether to terminate ray if it bounces backwards
     n_processes : int
@@ -144,7 +144,8 @@ def shoot_rays(
 
                     # _shoot_single_ray_process does not save launch angle in ray object
                     # need to set manually here
-                    rays_list[rays_list_idx].launch_angle = launch_angles[k]  # Use separate counter
+                    rays_list[rays_list_idx].launch_angle = -launch_angles[k]  # Use separate counter
+                    # launch angle sign is flipped to match z sign convention
                     rays_list_idx += 1  # Increment counter
             
             ray_fan = pr.RayFan(rays_list)
@@ -264,7 +265,7 @@ def _shoot_ray_array(
     Parameters
     ----------
     y0 : np.array (3,)
-        initial ray vector values [travel time, depth, ray parameter (sin(θ)/c)].
+        initial ray vector values [travel time, depth, ray parameter (sin(θ)/c)]. Specified with positive z convention.
     source_depth : float
         array of source depths (meters), should be 1D with shape (m,)
     source_range : np.array
@@ -482,8 +483,9 @@ def _shoot_single_ray_process(
                 full_ray_interpolated[1:,:],
                 n_bottom,
                 n_surface,
-                source_depth=source_depth
+                source_depth=source_depth,
             )
+
     except Exception as e:
         if debug:
             print(f'Error in ray integration: {e}')
@@ -522,7 +524,7 @@ def _shoot_ray_segment(
     x0 : float
         initial ray, x position
     y : np.array (3,)
-        ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
+        ray variables, [travel time, depth, ray parameter (sin(θ)/c)], specified with positive z convention
     receiver_range : float
         integration range end bound. starting point is x0
     cin : np.array (m,n)
