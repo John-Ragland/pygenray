@@ -84,6 +84,13 @@ def derivsrd(
     c = bilinear_interp(x,z,rin,zin,cin)
     cp = bilinear_interp(x,z,rin,zin,cpin)
 
+    # Check for numerical stability in denomoninator (avoid division by zero)
+    discriminant = 1 - (c**2) * (pz**2)
+    if discriminant <= 1e-10:
+        # If discriminant is too small, return large derivatives
+        # should force integrator to reduce step size or fail gracefully
+        return np.array([1e10, 1e10 if pz >= 0 else -1e10, 1e10])
+    
     # calculate derivatives
     fact=1/np.sqrt(1-(c**2)*(pz**2))
     dydx = np.array([
