@@ -32,7 +32,7 @@ actually... scipy might be worth it. Because I can have the ray code done in jus
 - shoot ray fan, save as *ray object*
 - for a given receiver depth, find all bracketing ray angles
     - i.e. plot ray depth vs ray launch angle and find every depth crossing
-- do root finding using bisection method
+- do root finding using regula falsi method
     - find linear zero crossing launch angle
     - launch that ray
     - use launched ray and previous bracketing rays and repeat until convergence
