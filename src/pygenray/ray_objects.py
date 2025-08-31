@@ -293,20 +293,40 @@ class RayFan:
         ----------
         key : int, slice, or array-like
             Index or slice to select rays. Can be:
-            - int: single ray index
-            - slice: slice object (e.g., 0:10:2)
-            - array-like: boolean mask or integer indices
+            - int: single ray index (returns Ray object)
+            - slice: slice object (e.g., 0:10:2, returns RayFan object)
+            - array-like: boolean mask or integer indices (returns RayFan object)
             
         Returns
         -------
-        RayFan
-            New RayFan object with selected rays
+        Ray or RayFan
+            Single Ray object if key is int, otherwise RayFan object with selected rays
         """
-        # Create Ray objects for the selected indices
+        # Handle single integer index - return Ray object
+        if isinstance(key, int):
+            # Handle negative indexing
+            if key < 0:
+                key = len(self.thetas) + key
+            
+            # Check bounds
+            if key < 0 or key >= len(self.thetas):
+                raise IndexError(f"Index {key} is out of bounds for RayFan with {len(self.thetas)} rays")
+            
+            # Return single Ray object
+            return Ray(
+                r=self.rs[key],
+                y=np.array([self.ts[key], -self.zs[key], -self.ps[key]]),
+                n_bottom=self.n_botts[key],
+                n_surface=self.n_surfs[key],
+                launch_angle=self.thetas[key],
+                source_depth=self.source_depths[key]
+            )
+        
+        # Handle slices and array-like indices - return RayFan object
         selected_rays = []
         
         # Handle the slicing to get the indices
-        if isinstance(key, (int, slice)):
+        if isinstance(key, slice):
             # Use numpy's advanced indexing to handle slices
             selected_indices = np.arange(len(self.thetas))[key]
         else:
@@ -315,15 +335,19 @@ class RayFan:
             if selected_indices.dtype == bool:
                 selected_indices = np.where(selected_indices)[0]
         
-        # Ensure selected_indices is iterable (convert single int to array)
-        if np.isscalar(selected_indices):
-            selected_indices = [selected_indices]
+        # Ensure selected_indices is iterable (handle 0-d arrays and scalars)
+        if np.isscalar(selected_indices) or selected_indices.ndim == 0:
+            selected_indices = [int(selected_indices)]
+        elif selected_indices.ndim == 1:
+            selected_indices = selected_indices.tolist()
+        else:
+            raise ValueError("Invalid indexing array shape")
         
         # Create Ray objects for selected indices
         for i in selected_indices:
             ray = Ray(
                 r=self.rs[i],
-                y=np.array([self.ts[i], self.zs[i], self.ps[i]]),
+                y=np.array([self.ts[i], -self.zs[i], -self.ps[i]]),
                 n_bottom=self.n_botts[i],
                 n_surface=self.n_surfs[i],
                 launch_angle=self.thetas[i],
@@ -346,6 +370,12 @@ class EigenRays:
         dictionary of eigen rays. Key values are indices of receiver depths, and values are lists of pr.Ray objects.
     environment : pr.OceanEnvironment2D
         OceanEnvironment2D environment used for ray tracing.
+    num_eigenrays : dict
+        Total number of eigen rays from the RayFan. (i.e. number of zero crossings of (z-rd) and launch angle)
+    num_eigenrays_found : dict
+        Total number of eigen rays found for each receiver depth.
+    failed_eray_theta_brackets : dict
+        Dictionary of failed eigen ray theta brackets. Keys are receiver depth indices, and values are lists of tuples (theta1, theta2) that bracket an eigenray from the Ray Fan, but for which an eigen ray wasn't found for the given ztol and iteration limit.
 
     Attributes
     ----------
@@ -369,23 +399,28 @@ class EigenRays:
         dictionary of number of bottom reflections for eigen rays. keys are range depth indices. values are arrays of shape (M,), where M is number of eigen rays
     n_surface : dict
         dictionary of number of surface reflections for eigen rays. keys are range depth indices. values are arrays of shape (M,), where M is number of eigen rays
-
+    ray_id : string
+        Ray ID string with boundary indicator.
+    ray_id_int : int
+        Ray ID integer with no boundary indicator.
     '''
 
-    def __init__(self,receiver_depths, eigenray_dict, environment, num_eigenrays, num_eigenrays_found):
+    def __init__(self,receiver_depths, eigenray_dict, environment, num_eigenrays, num_eigenrays_found, failed_eray_theta_brackets):
         self.receiver_depths = receiver_depths
 
         self.rs = {}
         self.ts = {}
         self.zs = {}
         self.ps = {}
-        self.n_botts = {}
-        self.n_surfs = {}
         self.received_angles = {}
         self.launch_angles = {}
+        self.n_botts = {}
+        self.n_surfs = {}
         self.ray_id = {}
+        self.ray_id_int = {}
         self.num_eigenrays = num_eigenrays
         self.num_eigenrays_found = num_eigenrays_found
+        self.failed_eray_theta_brackets = failed_eray_theta_brackets
 
         for ridx in range(len(receiver_depths)):
             # use ray fan concatenation to construct arrays
@@ -400,6 +435,7 @@ class EigenRays:
 
             received_angles_single = []
             ray_ids = []
+            ray_ids_int = []
             # compute receive angle
             for eray_idx in range(eray_fan.rs.shape[0]):
                 y_last = np.stack((eray_fan.ts[eray_idx, -1], eray_fan.zs[eray_idx, -1], eray_fan.ps[eray_idx, -1]))
@@ -416,9 +452,11 @@ class EigenRays:
                 else:
                     boundary_flag = 'b'
                 ray_ids.append(f'{ray_id_single}{boundary_flag}')
+                ray_ids_int.append(int(ray_id_single))
             self.received_angles[ridx] = np.array(received_angles_single)
             self.launch_angles[ridx] = eray_fan.thetas
             self.ray_id[ridx] = np.array(ray_ids)
+            self.ray_id_int[ridx] = np.array(ray_ids_int)
 
     def plot_angle_time(self,ridxs = None, **kwargs):
 
@@ -457,6 +495,23 @@ class EigenRays:
         plt.title('Eigen Rays')
         plt.ylim([self.zs[ridx].min(), self.zs[ridx].max()])
 
+    def plot_ducted(self, **kwargs):
+        '''
+        Plot all eigen rays that don't interact with boundaries
+        '''
+
+        ray_kwargs = {'c':'k'}
+        ray_kwargs.update(kwargs)
+
+        for ridx in self.ray_id.keys():
+            # Select rays that don't interact with boundaries
+            mask = (self.n_botts[ridx] == 0) & (self.n_surfs[ridx] == 0)
+            plt.plot(self.rs[ridx][mask].T, -self.zs[ridx][mask].T, **ray_kwargs)
+
+        plt.xlabel('range [m]')
+        plt.ylabel('depth [m]')
+        plt.title('Ducted Eigen Rays')
+
     def save_mat(self, filename):
         """
         Save EigenRays object to a .mat file.
@@ -478,6 +533,7 @@ class EigenRays:
                 'received_angles' : self.received_angles[ridx],
                 'launch_angles' : self.launch_angles[ridx],
                 'ray_id' : self.ray_id[ridx],
+                'ray_id_int' : self.ray_id_int[ridx],
                 'n_bottom' : self.n_botts[ridx] if hasattr(self, 'n_botts') else np.nan,
                 'n_surface' : self.n_surfs[ridx] if hasattr(self, 'n_surfs') else np.nan,
                 'source_depth' : self.source_depths[ridx] if hasattr(self, 'source_depths') else np.nan,

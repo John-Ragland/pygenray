@@ -6,7 +6,19 @@ import numpy as np
 import multiprocessing as mp
 from tqdm import tqdm
 
-def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_range, num_range_save, environment, ztol=1, max_iter=20, num_workers=None):
+def find_eigenrays(
+        rays,
+        receiver_depths,
+        source_depth,
+        source_range,
+        receiver_range,
+        num_range_save,
+        environment,
+        ztol=1,
+        max_iter=20,
+        num_workers=None,
+        **kwargs,
+    ):
     '''
     Given an initial ray fan, find eigenrays with bisection method of root finding.
 
@@ -32,6 +44,8 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
         maximum number of iterations for bisection method, by default 20
     num_workers : int, optional
         number of workers for parallel processing, by default None (uses all available cores, i.e. `mp.cpu_count()`)
+    kwargs : keyword arguments
+        additional keyword arguments passed to `pr.shoot_ray`
 
     Returns
     -------
@@ -41,36 +55,73 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
     erays_dict = {}
     num_eigenrays = {}
     num_eigenrays_found = {}
+    failed_eray_theta_brackets = {}
 
-    for rd_idx, receiver_depth in enumerate(tqdm(receiver_depths, desc="Finding Eigenrays")):
+    for rd_idx, receiver_depth in enumerate(receiver_depths):
         ## get initial bracketing rays
         # get indices before sign changes
         depth_sign = np.sign(rays.zs[:,-1] + receiver_depth)
         sign_change = np.diff(depth_sign)
         bracket_idxs_start = np.where(sign_change)[0]
 
+        num_eigenrays[receiver_depth] = len(bracket_idxs_start)
+
         # Get bracket indices
         bracket_idxs = np.column_stack([bracket_idxs_start, bracket_idxs_start + 1])
 
         # compute bisection launch angles
-        z1s = rays.zs[bracket_idxs[:,1].astype(int),-1]
-        z2s = rays.zs[bracket_idxs[:,0].astype(int),-1]
-        theta1s = rays.thetas[bracket_idxs[:,1].astype(int)]
-        theta2s = rays.thetas[bracket_idxs[:,0].astype(int)]
-        
-        bisection_thetas =  theta1s - (z1s + receiver_depth) * (theta2s - theta1s) / (z2s - z1s)
-        
-        num_eigenrays[receiver_depth] = len(bisection_thetas)
+        z1s = rays.zs[bracket_idxs[:,0].astype(int),-1]
+        z2s = rays.zs[bracket_idxs[:,1].astype(int),-1]
 
-        # Solve for each eigen ray at receiver depth
+        theta1s = rays.thetas[bracket_idxs[:,0].astype(int)]
+        theta2s = rays.thetas[bracket_idxs[:,1].astype(int)]
+
         erays_dict[rd_idx] = []
+        failed_eray_theta_brackets[rd_idx] = []
+
+        # This code block checks if ray fan already contains ray within depth tolerance.
+        # If so, that eigenray is removed from the search and the ray fan ray is used.
+        # This block works, but if num_range_save is different between RayFan and `find_eigenrays`
+        # there is a bug that breaks re-shooting eigenrays
+        # time efficiency that this block saves is not worth finding the bug at this time.
+        # will likely be removed in the future.
+        """
+        eray_found_idxs = []
+        for eray_idx in range(num_eigenrays[receiver_depth]):
+            z1_distance = np.abs(z1s[eray_idx] + receiver_depth)
+            z2_distance = np.abs(z2s[eray_idx] + receiver_depth)
+      
+            if (z1_distance < ztol) or (z2_distance < ztol):
+                bracket_winner = np.argmin([z1_distance, z2_distance])
+
+                ray = rays[int(bracket_idxs[eray_idx, bracket_winner])]
+
+                if num_range_save == len(ray.r):
+                    erays_dict[rd_idx].append(ray)
+                else:
+                    print(ray.launch_angle)
+                    erays_dict[rd_idx].append(pr.shoot_ray(source_depth, source_range, -ray.launch_angle, receiver_range, num_range_save, environment, **kwargs))
+
+                eray_found_idxs.append(eray_idx)
+            else:
+                continue
+        
+        # remove found eigenrays from search
+        z1s = np.delete(z1s, eray_found_idxs)
+        z2s = np.delete(z2s, eray_found_idxs)
+        theta1s = np.delete(theta1s, eray_found_idxs)
+        theta2s = np.delete(theta2s, eray_found_idxs)
+        """
+
+        bisection_thetas =  theta1s - (z1s + receiver_depth) * (theta2s - theta1s) / (z2s - z1s)
+
         if len(bisection_thetas) > 20: # use parallel processing for large number of rays
-            # contsruct argment iterable for parellel processing
+            # construct argument iterable for parallel processing
             args_list = []
             for k in range (len(bisection_thetas)):
                 args = (k, z1s[k], z2s[k], theta1s[k], theta2s[k], bisection_thetas[k],
                         receiver_depth, source_depth, source_range, receiver_range,
-                        num_range_save, environment, ztol, max_iter)
+                        num_range_save, environment, ztol, max_iter, kwargs)
                 args_list.append(args)
 
             # map individual eigen ray finding to different workers
@@ -83,18 +134,23 @@ def find_eigenrays(rays, receiver_depths, source_depth, source_range, receiver_r
             for result in results:
                 if result is not None:
                     erays_dict[rd_idx].append(result)
-        
+                else:
+                    failed_eray_theta_brackets[rd_idx].append((theta1s[k], theta2s[k]))
+
         else:  # use sequential processing for small number of rays
             for k in range(len(bisection_thetas)):
                 ray = _find_single_eigenray((k, z1s[k], z2s[k], theta1s[k], theta2s[k], bisection_thetas[k],
                                              receiver_depth, source_depth, source_range, receiver_range,
-                                             num_range_save, environment, ztol, max_iter))
+                                             num_range_save, environment, ztol, max_iter, kwargs))
                 if ray is not None:
                     erays_dict[rd_idx].append(ray)
+                else:
+                    failed_eray_theta_brackets[rd_idx].append((theta1s[k], theta2s[k]))
+
         num_eigenrays_found[rd_idx] = len(erays_dict[rd_idx])
 
     # Create EigenRays object after processing all receiver depths
-    erays = pr.EigenRays(receiver_depths, erays_dict, environment, num_eigenrays, num_eigenrays_found)
+    erays = pr.EigenRays(receiver_depths, erays_dict, environment, num_eigenrays, num_eigenrays_found, failed_eray_theta_brackets)
     return erays
 
 
@@ -102,15 +158,13 @@ def _find_single_eigenray(args):
     """
     Find single Eigen ray given the bracketing ray depths, and launch angles.
     """
-    k, z1, z2, theta1, theta2, bisection_theta, receiver_depth, source_depth, source_range, receiver_range, num_range_save, environment, ztol, max_iter = args
+    k, z1, z2, theta1, theta2, bisection_theta, receiver_depth, source_depth, source_range, receiver_range, num_range_save, environment, ztol, max_iter, kwargs = args
     
     iter_count = 0
-    within_tolerance = False
-
     # Bisection root finding loop
-    while not within_tolerance:
+    while True:
 
-        ray = pr.shoot_ray(source_depth, source_range, -bisection_theta, receiver_range, num_range_save, environment)
+        ray = pr.shoot_ray(source_depth, source_range, bisection_theta, receiver_range, num_range_save, environment, **kwargs)
 
         if ray is None:
             print(f'Failed to find eigen ray for receiver depth {receiver_depth} [m] and approximate launch angle {bisection_theta} [m] ray θ = 90°')
@@ -119,25 +173,22 @@ def _find_single_eigenray(args):
         if np.abs(ray.z[-1] + receiver_depth) < ztol:
             return ray
 
-        if ray.z[-1] < receiver_depth:
-            z1 = z1
-            z2 = ray.z[-1]
-            theta1 = theta1
-            theta2 = bisection_theta
-        else:
+        # Ray is on z1 side of receiver
+        if np.sign(ray.z[-1] + receiver_depth) == np.sign(z1 + receiver_depth):
             z1 = ray.z[-1]
-            z2 = z2
             theta1 = bisection_theta
-            theta2 = theta2
-        
+        # Ray is on z2 side of receiver
+        else:
+            z2 = ray.z[-1]
+            theta2 = bisection_theta
+
         bisection_theta =  theta1 - (z1 + receiver_depth) * (theta2 - theta1) / (z2 - z1)
 
         if iter_count > max_iter:
-            print(f'Failed to find eigen ray for receiver depth {receiver_depth} [m] and approximate launch angle {bisection_theta} [m] after {max_iter} iterations.')
             return None
+        
         iter_count += 1
-    
-    return None
+
 
 
 __all__ = ['find_eigenrays']
