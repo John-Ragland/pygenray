@@ -134,7 +134,7 @@ class RayFan:
         
         return
 
-    def plot_time_front(self,include_lines=False, range_idx=-1, **kwargs):
+    def plot_time_front(self,include_lines=False, range_idx=-1, add_colorbar=True, **kwargs):
         '''
         plot time front. Key word arguments are passed to plt.scatter.
 
@@ -142,6 +142,10 @@ class RayFan:
         ----------
         include_lines : bool
             if True, lines between received rays on time plots are plotted
+        range_idx : int
+            index of the range to plot the time front for
+        add_colorbar : bool
+            if True, a colorbar is added to the plot, Default True
         '''
 
         if include_lines:
@@ -154,7 +158,8 @@ class RayFan:
 
 
         plt.ylim([self.zs.min(), self.zs.max()])
-        plt.colorbar(label='launch angle [degrees]')
+        if add_colorbar:
+            plt.colorbar(label='launch angle [degrees]')
         plt.xlabel('time [s]')
         plt.ylabel('depth [m]')
         plt.title('Time Front')

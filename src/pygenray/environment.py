@@ -168,13 +168,28 @@ class OceanEnvironment2D:
         kwargs are passed to matplotlib.pyplot.pcolormesh through xarray
         '''
 
-        ssp_kwargs = {'cmap': 'viridis', 'cbar_kwargs': {'label': 'sound speed [m/s]'}}
-        ssp_kwargs.update(kwargs)
-        self.sound_speed.plot(
-            x='range',
-            y='depth',
-            **ssp_kwargs
-        )
+        # whether or not to include color bar
+        if 'add_colorbar' in kwargs:
+            add_colorbar=kwargs['add_colorbar']
+            del kwargs['add_colorbar']
+        else:
+            add_colorbar=True
+
+        if add_colorbar:
+            ssp_kwargs = {'cmap': 'viridis', 'cbar_kwargs': {'label': 'sound speed [m/s]'}}
+            ssp_kwargs.update(kwargs)
+            self.sound_speed.plot(
+                x='range',
+                y='depth',
+                **ssp_kwargs
+            )
+        else:
+            self.sound_speed.plot(
+                x='range',
+                y='depth',
+                add_colorbar=False,
+                **kwargs
+            )
         
         # plot bathymetry
         plt.fill_between(
