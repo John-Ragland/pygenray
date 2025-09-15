@@ -115,7 +115,7 @@ def find_eigenrays(
 
         regula_falsi_thetas =  theta1s - (z1s + receiver_depth) * (theta2s - theta1s) / (z2s - z1s)
 
-        if len(regula_falsi_thetas) > 20: # use parallel processing for large number of rays
+        if len(regula_falsi_thetas) > 5: # use parallel processing for large number of rays
             # construct argument iterable for parallel processing
             args_list = []
             for k in range (len(regula_falsi_thetas)):
@@ -138,7 +138,7 @@ def find_eigenrays(
                     failed_eray_theta_brackets[rd_idx].append((theta1s[k], theta2s[k]))
 
         else:  # use sequential processing for small number of rays
-            for k in range(len(regula_falsi_thetas)):
+            for k in tqdm(range(len(regula_falsi_thetas)), desc='Finding eigenrays:'):
                 ray = _find_single_eigenray((k, z1s[k], z2s[k], theta1s[k], theta2s[k], regula_falsi_thetas[k],
                                              receiver_depth, source_depth, source_range, receiver_range,
                                              num_range_save, environment, ztol, max_iter, kwargs))
@@ -171,6 +171,9 @@ def _find_single_eigenray(args):
             return None
         
         if np.abs(ray.z[-1] + receiver_depth) < ztol:
+
+            # flip launch angle to match sign convention
+            ray.launch_angle = -ray.launch_angle
             return ray
 
         # Ray is on z1 side of receiver
