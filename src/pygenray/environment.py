@@ -54,6 +54,9 @@ class OceanEnvironment2D:
             verbose=False
             ):
         
+        # save attributes
+        self.latitude = lat
+
         # Check Sound Speed Profile
         if sound_speed is None:
             # calculate Munk profile

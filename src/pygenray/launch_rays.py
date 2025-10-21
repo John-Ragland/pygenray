@@ -84,7 +84,7 @@ def shoot_rays(
     # TODO set threshold to accurately reflect overhead trade off
     if len(launch_angles) < 70:
         rays_ls = []
-        for launch_angle in tqdm(launch_angles):
+        for launch_angle in tqdm(launch_angles, desc="Computing ray fan"):
             rays_ls.append(
                 shoot_ray(
                     source_depth,
@@ -128,7 +128,7 @@ def shoot_rays(
             )
             
             with mp.Pool(n_processes) as pool:
-                rays_ls = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Processing rays"))
+                rays_ls = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Computing ray fan"))
 
             ranges = np.linspace(source_range, receiver_range, num_range_save)
 
