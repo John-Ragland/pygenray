@@ -20,6 +20,8 @@ References
 """
 import numba
 import numpy as np
+import jax
+import jax.numpy as jnp
 
 @numba.njit(fastmath=True, cache=True)
 def derivsrd(
@@ -317,6 +319,148 @@ def ray_angle(
     theta = np.degrees(np.arcsin(y[2] * c))
     return theta,c
 
+@jax.jit
+def derivsrd_jax(
+        x : float,
+        y : jnp.array,
+        args : tuple,
+     ) -> jnp.array:
+    '''
+    Compute the differential equations for ray propagation (with jax backing). The ray equations are derived from the Hamiltonian formulation for ray theory [Colosi2016a]_, which consist of three coupled ODEs with range as the independant varibale, given by equations :eq:`ray1d`, :eq:`ray2d`, and :eq:`ray3d`.
+
+    .. math::
+        y = \\left [ t, z, p \\right ]^T
+
+    where :math:`t` is the travel time, :math:`z` is the depth, and :math:`p` is the ray parameter :math:`(\\frac{sin(\\theta)}{c})`, and range, :math:`x` is the independant variable.
+
+    .. math :: \\frac{dT}{dx} = \\frac{1}{c\\sqrt{1-c^2 \\ p_z^2}} \\\\
+        :label: ray1d
+    .. math :: \\frac{dz}{dx} = \\frac{c \\ p_z}{ \\sqrt{1-c^2 \\ p_z^2}} \\\\
+        :label: ray2d
+    .. math :: \\frac{dp_z}{dx} = -\\frac{1}{c^2}\\frac{1}{\\sqrt{1-c^2 \\ p_z^2}}\\frac{\\partial c}{\\partial z} \\\\
+        :label: ray3d
+
+    Parameters
+    ----------
+    x : float
+        horizontal range (meters)
+    y : np.array (3,)
+        ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
+    args : tuple
+        tuple of additional arguments:
+        - cin : np.array (m,n)
+            2D array of sound speed values
+        - cpin : np.array (m,n)
+            2D array of dc/dz
+        - rin : np.array (m,)
+            range coordinate for c arrays
+        - zin : np.array (n,)
+            depth coordinate for c arrays
+        - depths : np.array (k,)
+            array of bathymetry values
+        - depth_ranges : np.array(k,)
+            array of bathymetry value ranges. Does not have to match rin grid.
+
+    Returns
+    -------
+    dydx : np.array (3,)
+        derivative of ray variables with respect to horizontal range, [dT/dx, dz/dx, dp/dx]
+
+    References
+    ----------
+    .. [Colosi2016a] Colosi, J. A. (2016). Sound Propagation through the Stochastic Ocean, Cambridge University Press, 443 pages.
+    '''
+    # unpack args
+    cin, cpin, rin, zin, depths, depth_ranges = args
+    
+    #unpack ray variables
+    z=y[1] # current depth
+    pz=y[2] # current ray parameter
+
+    #interpolate sound speed and its derivative at current depth and range
+    c = bilinear_interp_jax(x,z,rin,zin,cin)
+    cp = bilinear_interp_jax(x,z,rin,zin,cpin)
+
+    # calculate derivatives
+    fact=1/jnp.sqrt(1-(c**2)*(pz**2))
+    dydx = jnp.array([
+        fact/c,
+        c*pz*fact,
+        -fact*cp/(c**2)
+    ])
+
+    return dydx
+
+@jax.jit
+def bilinear_interp_jax(x, y, x_grid, y_grid, values):
+    """
+    Perform bilinear interpolation on a 2D grid.
+
+    Fast, purely functional bilinear interpolation for scattered points on a
+    regular 2D grid using JAX for performance.
+
+    Parameters
+    ----------
+    x : float
+        The x-coordinate at which to interpolate.
+    y : float
+        The y-coordinate at which to interpolate.
+    x_grid : array_like
+        1-D array of x-coordinates of the grid points, must be sorted in 
+        ascending order.
+    y_grid : array_like
+        1-D array of y-coordinates of the grid points, must be sorted in
+        ascending order.
+    values : array_like
+        2-D array of shape (len(x_grid), len(y_grid)) containing the values
+        at each grid point.
+
+    Returns
+    -------
+    float
+        The interpolated value at point (x, y).
+
+    Notes
+    -----
+    This function uses bilinear interpolation, which linearly interpolates
+    first in one dimension, then in the other. The interpolation is performed
+    using the four nearest grid points surrounding the query point.
+
+    If the query point lies outside the grid bounds, it is clamped to the
+    nearest edge of the grid before interpolation.
+
+    The function is compiled with Numba's JIT compiler for improved performance.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> x_grid = np.array([0.0, 1.0, 2.0])
+    >>> y_grid = np.array([0.0, 1.0, 2.0])
+    >>> values = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+    >>> result = bilinear_interp(0.5, 0.5, x_grid, y_grid, values)
+    >>> print(result)  # Should be 3.0
+    """
+
+    # Find grid indices
+    i = jnp.searchsorted(x_grid, x) - 1
+    j = jnp.searchsorted(y_grid, y) - 1
+
+    # Clamp to grid bounds
+    i = jnp.clip(i, 0, len(x_grid) - 2)
+    j = jnp.clip(j, 0, len(y_grid) - 2)
+    
+    # Bilinear weights
+    wx = (x - x_grid[i]) / (x_grid[i+1] - x_grid[i])
+    wy = (y - y_grid[j]) / (y_grid[j+1] - y_grid[j])
+    
+    # Interpolate
+    v00 = values[i, j]
+    v10 = values[i+1, j] 
+    v01 = values[i, j+1]
+    v11 = values[i+1, j+1]
+    
+    return (1-wx)*(1-wy)*v00 + wx*(1-wy)*v10 + (1-wx)*wy*v01 + wx*wy*v11
+
 
 __all__ = [
     'derivsrd',
@@ -327,5 +471,7 @@ __all__ = [
     'bilinear_interp',
     'linear_interp',
     'vertical_ray',
+    'derivsrd_jax',
+    'bilinear_interp_jax'
 ]
 
