@@ -132,9 +132,27 @@ class RayFan:
         self.n_surfs = np.array(n_surfs)
         self.source_depths = np.array(source_depths)
         
+        self.compute_rayids()
         return
 
-    def plot_time_front(self,include_lines=False, range_idx=-1, add_colorbar=True, **kwargs):
+    def compute_rayids(self):
+        '''
+        compute the ray IDs for each ray in ray fan.
+        '''
+        ray_ids = np.sum(np.diff(np.sign(self.ps)) != 0, axis=1) * (np.sign(self.thetas))
+        b_mask = (self.n_botts == 0) & (self.n_surfs == 0)
+        ray_ids_str = []
+
+        for i in range(self.rs.shape[0]):
+            if b_mask[i]:
+                ray_ids_str.append(str(ray_ids[i]))
+            else:
+                ray_ids_str.append(f'{ray_ids[i]}b')
+
+        self.ray_ids = np.array(ray_ids_str)
+        return
+    
+    def plot_time_front(self,include_lines=False, range_idx=-1, add_colorbar=True, ray_id=False,**kwargs):
         '''
         plot time front. Key word arguments are passed to plt.scatter.
 
@@ -146,6 +164,8 @@ class RayFan:
             index of the range to plot the time front for
         add_colorbar : bool
             if True, a colorbar is added to the plot, Default True
+        ray_id : bool
+            if true, than the colors of the time-front arrivals are the ray IDs
         '''
 
         if include_lines:
@@ -154,16 +174,34 @@ class RayFan:
 
         scatter_kwargs = {'c': self.thetas, 'cmap': 'managua', 's': 2, 'lw': 0, 'zorder': 6}
         scatter_kwargs.update(kwargs)
+
+        if ray_id:
+            # Get unique categories and assign each a color
+            unique_categories = np.unique(self.ray_ids)
+            colors = plt.cm.tab20(np.linspace(0, 1, len(unique_categories)))
+
+            # Create a color map from category to color
+            category_to_color = dict(zip(unique_categories, colors))
+
+            # Map each point's category to its color
+            point_colors = [category_to_color[cat] for cat in self.ray_ids]
+            scatter_kwargs.update({'c': point_colors})
+            add_colorbar = False
+
+            # Add a legend
+            for i, cat in enumerate(unique_categories):
+                plt.scatter([], [], c=[colors[i]], label=cat)
+            plt.legend(ncols=3, loc='lower left')
+
+
         plt.scatter(x=self.ts[:,range_idx], y=self.zs[:,range_idx], **scatter_kwargs)
-
-
         plt.ylim([self.zs.min(), self.zs.max()])
         if add_colorbar:
             plt.colorbar(label='launch angle [degrees]')
-        plt.xlabel('time [s]')
-        plt.ylabel('depth [m]')
-        plt.title('Time Front')
-    
+            plt.xlabel('time [s]')
+            plt.ylabel('depth [m]')
+            plt.title('Time Front')
+
     def plot_ray_fan(self,**kwargs):
         '''
         plot ray fan
