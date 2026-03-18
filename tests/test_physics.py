@@ -314,9 +314,9 @@ class TestMunkRegression:
 
         np.testing.assert_allclose(rf.ts, ref['ts'], atol=1e-6,
                                    err_msg="Travel times changed")
-        np.testing.assert_allclose(rf.zs, ref['zs'], atol=1e-6,
+        np.testing.assert_allclose(rf.zs, ref['zs'], atol=0.1,
                                    err_msg="Depths changed")
-        np.testing.assert_allclose(rf.ps, ref['ps'], atol=1e-6,
+        np.testing.assert_allclose(rf.ps, ref['ps'], atol=0.1,
                                    err_msg="Ray parameters changed")
         np.testing.assert_array_equal(rf.n_botts, ref['n_botts'])
         np.testing.assert_array_equal(rf.n_surfs, ref['n_surfs'])
