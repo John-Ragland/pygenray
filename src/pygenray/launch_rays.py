@@ -1,78 +1,65 @@
 import numpy as np
-import scipy.integrate
+import jax
+import jax.numpy as jnp
+import diffrax
+import optimistix as optx
 import pygenray as pr
-import scipy
-import multiprocessing as mp
-from functools import partial
 from tqdm import tqdm
-import time
+
+from .integration_processes import derivsrd, bilinear_interp, linear_interp, ray_angle, event_cond
+
 
 def shoot_rays(
-        source_depth : float,
-        source_range : float,
-        launch_angles : np.array,
-        receiver_range : float,
-        num_range_save : int,
-        environment : pr.OceanEnvironment2D,
-        rtol = 1e-9,
-        terminate_backwards : bool = True,
-        n_processes : int = None,
-        debug : bool = True,
-        flatearth : bool = True
+        source_depth: float,
+        source_range: float,
+        launch_angles: np.array,
+        receiver_range: float,
+        num_range_save: int,
+        environment: pr.OceanEnvironment2D,
+        rtol=1e-9,
+        terminate_backwards: bool = True,
+        n_processes: int = None,  # deprecated, ignored
+        debug: bool = True,
+        flatearth: bool = True
 ):
     '''
-    Integrate rays for given environment and launch angles. Different launch angle initial conditions are mapped to available CPUS.
+    Integrate rays for given environment and launch angles.
 
     Parameters
     ----------
-    source_depth : np.array
-        array of source depths (meters)
-    source_range : np.array
-        array of source ranges (meters)
+    source_depth : float
+        source depth (meters)
+    source_range : float
+        source range (meters)
     launch_angles : np.array
         array of source angles (degrees)
     receiver_range : float
         receiver range (meters)
     num_range_save : int
-        The number of range values to save the ray state at. This value is unrelated to the numerical integration.
-        The ray state value that is at the end bounds of the range integration is saved exactly.
-        All other values are interpolated to a range grid with `num_range_save` points between the source and receiver range.
-    environment : pr.OceanEnvironment
-        OceanEnvironment object specifying sound speed and bathymetry.
+        number of range points to save ray state at
+    environment : pr.OceanEnvironment2D
+        OceanEnvironment object specifying sound speed and bathymetry
     rtol : float
         relative tolerance for the ODE solver, default is 1e-9
     terminate_backwards : bool
         whether to terminate ray if it bounces backwards
     n_processes : int
-        number of processes to use, Default of None (mp.cpu_count)
+        deprecated, ignored (multiprocessing removed; vmap support coming)
     debug : bool
-        whether to print debug information, default is False
+        whether to print debug information
     flatearth : bool
-        whether to transform environment to flat earth coordinates. Default is True.
+        whether to transform environment to flat earth coordinates
 
     Returns
     -------
-    ray : np.array
-        2D array of ray state at each x_eval point, shape (4, n_eval), where n_eval is the number of evaluation points
-    n_bott : int
-        number of bottom bounces
-    n_surf : int
-        number of surface bounces
+    rays : pr.RayFan
     '''
-
-    # flip launch angles to match sign convention
     if type(launch_angles) is list:
         launch_angles = np.array(launch_angles)
-    launch_angles = -launch_angles
+    launch_angles = -launch_angles  # flip to match sign convention
 
-    if n_processes == None:
-        n_processes = mp.cpu_count()
-    # set up initial conditions for ray variable
-
-    ## unpack environment object
     cin, cpin, rin, zin, depths, depth_ranges, bottom_angles = _unpack_envi(environment, flatearth=flatearth)
-    
-    # check that coordinates are monotonically increasing
+
     if not (np.all(np.diff(rin) >= 0)):
         raise Exception('Sound speed range coordinates must be monotonically increasing.')
     if not (np.all(np.diff(zin) >= 0)):
@@ -80,519 +67,258 @@ def shoot_rays(
     if not (np.all(np.diff(depth_ranges) >= 0)):
         raise Exception('Bathymetry range coordinates must be monotonically increasing.')
 
-    # Use multiprocessing if number of rays is high enough
-    # TODO set threshold to accurately reflect overhead trade off
-    if len(launch_angles) < 70:
-        rays_ls = []
-        for launch_angle in tqdm(launch_angles, desc="Computing ray fan"):
-            rays_ls.append(
-                shoot_ray(
-                    source_depth,
-                    source_range,
-                    launch_angle,
-                    receiver_range,
-                    num_range_save,
-                    environment,
-                    rtol=rtol,
-                    terminate_backwards=terminate_backwards,
-                    debug=debug,
-                    flatearth=flatearth
-                )
-            )
-        # shoot_ray automatically saves launch angle to ray object
-        # launch angle doesn't need to be set manually here
+    cin_j = jnp.array(cin)
+    cpin_j = jnp.array(cpin)
+    rin_j = jnp.array(rin)
+    zin_j = jnp.array(zin)
+    depths_j = jnp.array(depths)
+    dr_j = jnp.array(depth_ranges)
+    bottom_angles_j = jnp.array(bottom_angles)
+    env_arrays = (cin_j, cpin_j, rin_j, zin_j, depths_j, dr_j, bottom_angles_j)
 
-        # remove dropped rays
-        rays_ls_nonone = [ray for ray in rays_ls if ray is not None]
-        rays = pr.RayFan(rays_ls_nonone)
-        return rays
-    
-    else: # Use multiprocessing
-        # Create Shared Arrays
-        array_metadata, shms = pr._init_shared_memory(cin, cpin, rin ,zin, depths, depth_ranges, bottom_angles)
-
-        try:
-            # calculate initial ray parameter
-            c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
-            y0s = [np.array([0, source_depth, np.sin(np.radians(launch_angle))/c]) for launch_angle in launch_angles]
-
-            shoot_ray_part = partial(
-                _shoot_single_ray_process,
-                source_range=source_range,
-                source_depth=source_depth,
-                receiver_range=receiver_range,
-                num_range_save=num_range_save,
-                array_metadata=array_metadata,
+    rays_ls = []
+    for launch_angle in tqdm(launch_angles, desc="Computing ray fan"):
+        rays_ls.append(
+            shoot_ray(
+                source_depth,
+                source_range,
+                launch_angle,
+                receiver_range,
+                num_range_save,
+                environment,
                 rtol=rtol,
-                terminate_backwards=terminate_backwards
+                terminate_backwards=terminate_backwards,
+                debug=debug,
+                flatearth=flatearth,
+                _env_arrays=env_arrays,
             )
-            
-            with mp.Pool(n_processes) as pool:
-                rays_ls = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Computing ray fan"))
+        )
 
-            ranges = np.linspace(source_range, receiver_range, num_range_save)
+    rays_ls_nonone = [ray for ray in rays_ls if ray is not None]
+    rays = pr.RayFan(rays_ls_nonone)
+    return rays
 
-            # unpack results
-            rays_list = []
-            rays_list_idx = 0  # Add separate counter for rays_list
-            for k, single_ray in enumerate(rays_ls):
-                if single_ray is None:
-                    continue
-                else:
-                    # reinterpolate ray to range grid
-                    rays_list.append(single_ray)
-
-                    # _shoot_single_ray_process does not save launch angle in ray object
-                    # need to set manually here
-                    rays_list[rays_list_idx].launch_angle = -launch_angles[k]  # Use separate counter
-                    # launch angle sign is flipped to match z sign convention
-                    rays_list_idx += 1  # Increment counter
-            
-            ray_fan = pr.RayFan(rays_list)
-        
-        finally:
-            time.sleep(0.1)  # Ensure all processes have finished before cleaning up shared memory
-            # Always clean up shared memory, even if an error occurs
-            for var in shms:
-                try:
-                    shms[var].unlink()
-                    shms[var].close()
-                except:
-                    pass # ignore cleanup errors
-
-        return ray_fan
 
 def shoot_ray(
-    source_depth : float,
-    source_range : float,
-    launch_angle : float,
-    receiver_range : float,
-    num_range_save : int,
-    environment : pr.OceanEnvironment2D,
-    rtol = 1e-9,
-    terminate_backwards : bool = True,
-    debug : bool = True,
-    flatearth : bool = True
+    source_depth: float,
+    source_range: float,
+    launch_angle: float,
+    receiver_range: float,
+    num_range_save: int,
+    environment: pr.OceanEnvironment2D,
+    rtol=1e-9,
+    terminate_backwards: bool = True,
+    debug: bool = True,
+    flatearth: bool = True,
+    _env_arrays=None,
 ):
     """
-    Integrate rays for given environment and launch angles. Different launch angle initial conditions are mapped to available CPUS.
-    
+    Integrate a single ray for a given environment and launch angle.
+
     Parameters
     ----------
     source_depth : float
-        array of source depths (meters)
+        source depth (meters)
     source_range : float
-        array of source ranges (meters)
-    launch_angle : np.array
-        array of source angles (degrees), should be 1D with shape (k,)
+        source range (meters)
+    launch_angle : float
+        launch angle (degrees)
     receiver_range : float
         receiver range (meters)
     num_range_save : int
-        The number of range values to save the ray state at. This value is unrelated to the numerical integration.
-        The ray state value that is at the end bounds of the range integration is saved exactly.
-        All other values are interpolated to a range grid with `num_range_save` points between the source and receiver range.
-    environment : pr.OceanEnvironment
-        OceanEnvironment object specifying sound speed and bathymetry.
+        number of range points to save ray state at
+    environment : pr.OceanEnvironment2D
+        OceanEnvironment object specifying sound speed and bathymetry
     rtol : float
-        relative tolerance for the ODE solver, default is 1e-6
+        relative tolerance for the ODE solver
     terminate_backwards : bool
-        whether to terminate ray if it bounces backwards)
+        whether to terminate ray if it bounces backwards
     debug : bool
-        whether to print debug information, default is False
+        whether to print debug information
     flatearth : bool
-        whether to transform environment to flat earth coordinates. Default is True.
-        
-    Returns 
-    -------
-    ray : pr.Ray
-        pr.Ray object
-
-    """
-
-    # flip launch angle to match sign convention
-    launch_angle = -launch_angle
-    
-    cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles = _unpack_envi(environment, flatearth=flatearth)
-
-    # check that coordinates are monotonically increasing
-    if not (np.all(np.diff(rin) >= 0)):
-        raise Exception('Sound speed range coordinates must be monotonically increasing.')
-    if not (np.all(np.diff(zin) >= 0)):
-        raise Exception('Sound speed depth coordinates must be monotonically increasing.')
-    if not (np.all(np.diff(depth_ranges) >= 0)):
-        raise Exception('Bathymetry range coordinates must be monotonically increasing.')
-    
-    # calculate y0
-    c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
-    y0 = np.array([0, source_depth, np.sin(np.radians(launch_angle))/c])
-
-    # launch ray at angle theta
-    sols, full_ray, n_bottom, n_surface = _shoot_ray_array(
-        y0, source_depth, source_range, receiver_range, cin, cpin, rin, zin, depths, depth_ranges, bottom_angles, rtol, terminate_backwards,debug
-    )
-
-    if full_ray is None:
-        return None
-    else:
-        # reinterpolate ray to range grid
-        range_save = np.linspace(source_range, receiver_range, num_range_save)
-        full_ray = _interpolate_ray(sols, range_save)
-        ray = pr.Ray(full_ray[0,:], full_ray[1:,:], n_bottom, n_surface, launch_angle, source_depth)
-    
-        return ray
-
-def _shoot_ray_array(
-    y0 : np.array,
-    source_depth : float,
-    source_range : float,
-    receiver_range : float,
-    cin : np.array,
-    cpin : np.array,
-    rin : np.array,
-    zin : np.array,
-    depths : np.array,
-    depth_ranges : np.array,
-    bottom_angles : np.array,
-    rtol = 1e-9,
-    terminate_backwards : bool = True,
-    debug : bool = True,
-):
-    """
-    Integrate single ray. Integration is terminated at bottom and surface reflections, and reflection angle is calculated and updated. Integration is looped until ray reaches receiver range. If there is an error in the integration, the function returns None, None, None, None.
-    
-    Environment specified by numpy arrays that are returned by {mod}`pr._unpack_envi()`.
-
-    Parameters
-    ----------
-    y0 : np.array (3,)
-        initial ray vector values [travel time, depth, ray parameter (sin(θ)/c)]. Specified with positive z convention.
-    source_depth : float
-        array of source depths (meters), should be 1D with shape (m,)
-    source_range : np.array
-        array of source ranges (meters), should be 1D with shape (n,)
-    receiver_range : float
-        receiver range (meters)
-    launch_angle : float
-        launch angle of ray (degrees)
-    cin : np.array (m,n)
-        2D array of sound speed values
-    cpin : np.array (m,n)
-        2D array of dc/dz
-    rin : np.array (m,)
-        range coordinate for c arrays
-    zin : np.array (n,)
-        depth coordinate for c arrays
-    depths : np.array(m,)
-        array of depths (meters), should be 1D with shape (m,)
-    depth_ranges : np.array(m,)
-        array of depth ranges (meters), should be 1D with shape (m,)
-    bottom_angles : np.array(m,)
-        array of bottom angles (degrees), should be 1D with shape and correspond to range bins `depth_ranges`
-    environment : pr.OceanEnvironment
-        OceanEnvironment object specifying sound speed and bathymetry.
-    rtol : float
-        relative tolerance for the ODE solver, default is 1e-6
-    terminate_backwards : bool
-        whether to terminate ray if it bounces backwards. Default True.
-    debug : bool
-        whether to print debug information, default is False
+        whether to transform environment to flat earth coordinates
+    _env_arrays : tuple or None
+        pre-converted JAX arrays (cin_j, cpin_j, rin_j, zin_j, depths_j, dr_j, bottom_angles_j);
+        when provided, skips _unpack_envi and validation (used by shoot_rays for performance)
 
     Returns
     -------
-    ray : pr.Ray
-        Ray object
+    ray : pr.Ray or None
     """
+    launch_angle = -launch_angle  # flip to match sign convention
 
-    # initialize loop parameters
+    if _env_arrays is not None:
+        cin_j, cpin_j, rin_j, zin_j, depths_j, dr_j, bottom_angles_j = _env_arrays
+    else:
+        cin, cpin, rin, zin, depths, depth_ranges, bottom_angles = _unpack_envi(environment, flatearth=flatearth)
+
+        if not (np.all(np.diff(rin) >= 0)):
+            raise Exception('Sound speed range coordinates must be monotonically increasing.')
+        if not (np.all(np.diff(zin) >= 0)):
+            raise Exception('Sound speed depth coordinates must be monotonically increasing.')
+        if not (np.all(np.diff(depth_ranges) >= 0)):
+            raise Exception('Bathymetry range coordinates must be monotonically increasing.')
+
+        cin_j = jnp.array(cin)
+        cpin_j = jnp.array(cpin)
+        rin_j = jnp.array(rin)
+        zin_j = jnp.array(zin)
+        depths_j = jnp.array(depths)
+        dr_j = jnp.array(depth_ranges)
+        bottom_angles_j = jnp.array(bottom_angles)
+
+    args = (cin_j, cpin_j, rin_j, zin_j, depths_j, dr_j)
+
+    c = pr.bilinear_interp(source_range, source_depth, rin_j, zin_j, cin_j)
+    y0 = np.array([0.0, source_depth, np.sin(np.radians(launch_angle)) / float(c)])
+
+    sols, success, n_bottom, n_surface = _shoot_ray_array(
+        y0, source_range, receiver_range, args, bottom_angles_j,
+        rtol, terminate_backwards, debug
+    )
+
+    if sols is None:
+        return None
+
+    range_save = np.linspace(source_range, receiver_range, num_range_save)
+    full_ray = _interpolate_ray(sols, range_save)
+    ray = pr.Ray(full_ray[0, :], full_ray[1:, :], n_bottom, n_surface, launch_angle, source_depth)
+    return ray
+
+
+def _shoot_ray_array(
+    y0: np.array,
+    source_range: float,
+    receiver_range: float,
+    args: tuple,
+    bottom_angles_j,
+    rtol=1e-9,
+    terminate_backwards: bool = True,
+    debug: bool = True,
+):
+    """
+    Integrate single ray with bounce handling using diffrax.
+
+    Returns
+    -------
+    sols : list of diffrax solutions, or None on failure
+    success : True on success, None on failure
+    n_bottom : int
+    n_surface : int
+    """
+    cin_j, cpin_j, rin_j, zin_j, depths_j, dr_j = args
+
     x_intermediate = source_range
-    full_ray = np.concatenate((np.array([source_range]), y0)).copy()
-    full_ray = np.expand_dims(full_ray, axis=1)
+    y_intermediate = y0.copy()
     sols = []
     n_surface = 0
     n_bottom = 0
-    loop_count = 0
-
-    # create cubic interpolation of bottom slope
-    bottom_angle_interp = scipy.interpolate.interp1d(
-        depth_ranges,
-        bottom_angles,
-        kind='cubic'
-    )
-
-    # set intermediate ray state to initial ray state
-    y_intermediate = y0.copy()
 
     while x_intermediate < receiver_range:
-
-        sol = _shoot_ray_segment(
-            x_intermediate,
-            y_intermediate,
-            receiver_range,
-            cin,
-            cpin,
-            rin,
-            zin,
-            depths,
-            depth_ranges,
-            rtol=rtol,
-        )
-
-        if len(sol.t) == 0:
-            raise Exception('Integration segment failed, no points returned.')
-        
+        sol = _shoot_ray_segment(jnp.float64(x_intermediate), jnp.asarray(y_intermediate), jnp.float64(receiver_range), args, rtol=rtol)
         sols.append(sol)
-        full_ray = np.append(full_ray, np.vstack((sol.t, sol.y)), axis=1)
 
-        # if end of integration is reached, end loop
-        if sol.status == 0:
+        x_f = float(sol.ts[-1])
+        y_f = np.array(sol.ys[-1])
+        c_f = float(bilinear_interp(x_f, y_f[1], rin_j, zin_j, cin_j))
+        theta_f = float(jnp.degrees(jnp.arcsin(jnp.clip(y_f[2] * c_f, -1., 1.))))
+        bd_f = float(linear_interp(x_f, dr_j, depths_j))
+
+        y_intermediate = y_f.copy()
+
+        # Normal completion: reached receiver range
+        if abs(x_f - receiver_range) < 1.0:
             break
-        elif sol.status == -1:
+
+        # Determine which event fired and handle bounce
+        if abs(theta_f) >= (90.0 - 1e-3) - 0.01:
             if debug:
-                print(f'Integration failed with message: {sol.message}')
+                print(f'ray is vertical at x={x_f}, terminating integration')
             return None, None, None, None
-
-        y_intermediate = sol.y[:,-1]
-
-        # Bounce Event
-        if len(sol.t_events[0]) > 0 or len(sol.t_events[1]) > 0:
-            # Bounce event occurred, use the event time as the new range
-            if len(sol.t_events[0]) > 0:  # Surface event
-                x_intermediate = sol.t_events[0][0]
-            elif len(sol.t_events[1]) > 0:  # Bottom event  
-                x_intermediate = sol.t_events[1][0]
-        
-        # Vertical Ray
-        elif len(sol.t_events[2]) > 0:  # Vertical ray event
-            if debug:
-                print(f'ray is vertical at x={sol.t[-1]}, y={sol.y[1,-1]}, terminating integration')
-            return None, None, None, None
-
-        # calculate ray angle and sound speed at ray state
-        theta,c = pr.ray_angle(x_intermediate, y_intermediate, cin, rin, zin)
-        
-        # Surface Bounce
-        if len(sol.t_events[0])==1:
-            theta_bounce = -theta
+        elif y_f[1] <= 1.0:
+            theta_bounce = -theta_f
             n_surface += 1
-
-        # Bottom Bounce
-        elif len(sol.t_events[1])==1:
-            # β: bottom angle in degrees
-            beta = bottom_angle_interp(x_intermediate)
-            theta_bounce = 2*beta - theta
+            y_intermediate[1] = 0.0  # snap exactly to surface
+        elif y_f[1] >= bd_f - 1.0:
+            beta = float(linear_interp(jnp.float64(x_f), dr_j, bottom_angles_j))
+            theta_bounce = 2 * beta - theta_f
             n_bottom += 1
+            y_intermediate[1] = bd_f  # snap exactly to bottom
+        else:
+            if debug:
+                print(f'Integration ended unexpectedly at x={x_f}, y={y_f[1]}, terminating')
+            return None, None, None, None
 
-        # terminate if ray bounces backwards
-        if terminate_backwards and (np.abs(theta_bounce) > 90):
+        if terminate_backwards and abs(theta_bounce) > 90:
             if debug:
                 print(f'ray bounced backwards, terminating integration')
-            return None,None,None,None
-        
-        # update ray angle
-        y_intermediate[2] = np.sin(np.radians(theta_bounce)) / c
-        
-        loop_count += 1
-        
-    return sols, full_ray, n_bottom, n_surface
+            return None, None, None, None
 
-def _shoot_single_ray_process(
-        y0 : np.array,
-        source_range : float,
-        source_depth : float,
-        receiver_range : float,
-        num_range_save : int,
-        array_metadata : dict,
-        rtol = 1e-9,
-        terminate_backwards : bool = True,
-        debug : bool = False
-):
+        y_intermediate[2] = np.sin(np.radians(theta_bounce)) / c_f
+        x_intermediate = x_f
+
+    return sols, True, n_bottom, n_surface
+
+
+@jax.jit(static_argnames=['rtol'])
+def _shoot_ray_segment(x0: float, y0, receiver_range: float, args: tuple, rtol=1e-9):
     """
-    Shoot a single ray, accessing shared memory for environment data.
-    This is an internal function for multiprocessing handling.
-
-    Parameters
-    ----------
-    y0 : np.array (3,)
-        ray variables, [travel time, depth, ray parameter (sin(θ)/c)]
-    source_range : float
-        initial ray, x position
-    receiver_range : float
-        integration range end bound. starting point is x0
-    num_range_save : int
-        The number of range values to save the ray state at. This value is unrelated to the numerical integration.
-        The ray state value that is at the end bounds of the range integration is saved exactly.
-        All other values are interpolated to a range grid with `num_range_save` points between the source and receiver range.
-    array_metedata : dict
-        dictionary containing metadata of shared memory arrays specificing environment. Calculated with `pr._init_shared_memory()`.
-            cin, cpin, rin, zin, depths, depth_ranges, bottom_angle, x_eval
-    rtol : float
-        relative tolerance for the ODE solver, default is 1e-6
-    debug : bool
-        whether to print debug information, default is False
-
-    Returns
-    -------
-    full_ray : np.array
-        2D array of ray state at each x_eval point, shape (4, n_eval), where n_eval is the number of evaluation points
-    n_bottom : int
-        number of bottom bounces
-    n_surface : int
-        number of surface bounces
-    """
-
-    try:
-        # Access shared arrays
-        shared_arrays, existing_shms = pr._unpack_shared_memory(array_metadata)
-
-        cin = shared_arrays['cin']
-        cpin = shared_arrays['cpin']
-        rin = shared_arrays['rin']
-        zin = shared_arrays['zin']
-        depths = shared_arrays['depths']
-        depth_ranges = shared_arrays['depth_ranges']
-        bottom_angles = shared_arrays['bottom_angle']
-
-        sols, full_ray, n_bottom, n_surface = _shoot_ray_array(
-            y0,
-            source_depth,
-            source_range,
-            receiver_range,
-            cin,
-            cpin,
-            rin,
-            zin,
-            depths,
-            depth_ranges,
-            bottom_angles,
-            rtol,
-            terminate_backwards,
-            debug,
-        )
-        
-        range_save = np.linspace(source_range, receiver_range, num_range_save)
-
-        if full_ray is None:
-            return None
-        else:
-            # reinterpolate ray to range grid
-
-            full_ray_interpolated = _interpolate_ray(sols, range_save)  
-
-            ray = pr.Ray(
-                full_ray_interpolated[0,:],
-                full_ray_interpolated[1:,:],
-                n_bottom,
-                n_surface,
-                source_depth=source_depth,
-            )
-
-    except Exception as e:
-        if debug:
-            print(f'Error in ray integration: {e}')
-        return None
-    finally:
-        # Always close shared memory handles, even with error
-        for var in existing_shms:
-            try:
-                existing_shms[var].close()
-            except:
-                pass # ignore cleanup errors
-
-    return ray
-
-def _shoot_ray_segment(
-        x0 : float,
-        y0 : np.array,
-        receiver_range : float,
-        cin : np.array,
-        cpin : np.array,
-        rin : np.array,
-        zin : np.array,
-        depths : np.array,
-        depth_ranges : np.array,
-        rtol = 1e-9,
-        **kwargs
-):
-    """
-    Given an initial condition vector and initial range, integrate ray
-    until integration bounds or event is triggered (such as surface or bottom bounce).
-
-    any keyword arguments are passed to {mod}`scipy.integrate.solve_ivp`.
+    Integrate a single ray segment from x0 to receiver_range using diffrax.
+    Terminates early at a surface bounce, bottom bounce, or vertical ray event.
 
     Parameters
     ----------
     x0 : float
-        initial ray, x position
-    y : np.array (3,)
-        ray variables, [travel time, depth, ray parameter (sin(θ)/c)], specified with positive z convention
+        initial range
+    y0 : array (3,)
+        initial ray state [travel time, depth, ray parameter]
     receiver_range : float
-        integration range end bound. starting point is x0
-    cin : np.array (m,n)
-        2D array of sound speed values
-    cpin : np.array (m,n)
-        2D array of dc/dz
-    rin : np.array (m,)
-        range coordinate for c arrays
-    zin : np.array (n,)
-        depth coordinate for c arrays
-    depths : np.array(m,)
-        array of depths (meters), should be 1D with shape (m,)
-    depth_ranges : np.array(m,)
-        array of depth ranges (meters), should be 1D with shape (m,)
-    x_eval : np.array
-        array of x values at which to evaluate the solution
-        (optional, if not provided, will use default t_eval for :func:`scipy.integrate.solve_ivp`)
+        end range for integration
+    args : tuple
+        (cin, cpin, rin, zin, depths, depth_ranges) as JAX arrays
     rtol : float
-        relative tolerance for the ODE solver, default is 1e-6
-    debug : bool
-        whether to print debug information, default is False
-    **kwargs : dict
-        kwargs passed to {mod}`scipy.integrate.solve_ivp`.
+        relative tolerance
 
     Returns
     -------
-    sol : scipy.integrate.OdeResult
-        solution to integration segment.
+    sol : diffrax solution object with dense output
     """
-
-    # set up surface and bottom bounce events
-    surface_event = pr.surface_bounce
-    surface_event.terminal = True
-    surface_event.direction = 1
-    
-    bottom_event = pr.bottom_bounce  
-    bottom_event.terminal = True
-    bottom_event.direction = 1
-
-    vertical_ray = pr.vertical_ray
-    vertical_ray.terminal = True
-
-    events = (
-        surface_event,
-        bottom_event,
-        vertical_ray,
+    event = diffrax.Event(
+        event_cond,
+        root_finder=optx.Newton(rtol=1e-6, atol=1e-6),
+        direction=True,  # upcrossing only (negative → positive)
     )
 
-    sol = scipy.integrate.solve_ivp(
-        pr.derivsrd,
-        (x0,receiver_range),
-        y0,
-        args = (cin, cpin, rin, zin, depths, depth_ranges),
-        events = events,
-        rtol = rtol,
-        dense_output=True,
-        **kwargs
+    term = diffrax.ODETerm(derivsrd)
+    solver = diffrax.Dopri5()
+    stepsize_controller = diffrax.PIDController(rtol=rtol, atol=rtol * 1e-3)
+    saveat = diffrax.SaveAt(t0=True, t1=True, dense=True)
+
+    y0_jax = jnp.asarray(y0)
+    dt0 = (receiver_range - x0) * 1e-3
+
+    sol = diffrax.diffeqsolve(
+        term,
+        solver,
+        t0=x0,
+        t1=receiver_range,
+        dt0=dt0,
+        y0=y0_jax,
+        args=args,
+        saveat=saveat,
+        stepsize_controller=stepsize_controller,
+        event=event,
+        max_steps=100000,
+        throw=False,
     )
 
     return sol
 
-def _unpack_envi(environment, flatearth=True):
 
+def _unpack_envi(environment, flatearth=True):
     if flatearth:
-        # chech that environment.sound_speed_fe exists
         if not hasattr(environment, 'sound_speed_fe'):
             raise Exception('Flat earth transformation has not been applied. Set `flat_earth_transform=True` when creating the OceanEnvironment2D object.')
-        
         cin = np.array(environment.sound_speed_fe.values)
         cpin = np.array(environment.sound_speed_fe.differentiate('depth').values)
         rin = np.array(environment.sound_speed_fe.range.values)
@@ -609,49 +335,45 @@ def _unpack_envi(environment, flatearth=True):
         depth_ranges = np.array(environment.bathymetry.range.values)
         bottom_angles = np.array(environment.bottom_angle)
 
-    return cin, cpin, rin, zin ,depths, depth_ranges, bottom_angles
+    return cin, cpin, rin, zin, depths, depth_ranges, bottom_angles
 
 
-def _interpolate_ray(
-        sols : list,
-        range_save : np.array
-):
+def _interpolate_ray(sols: list, range_save: np.array):
     """
-    Given list of {mod}`scipy.integrate._ivp.ivp.OdeResult` solutions, corresponding to integrated ray segments
-    interpolate ray state to specfied range grid using the order of the numerical solver (using `dense_output=True` in `scipy.integrate.solve_ivp`).
+    Interpolate ray state to a uniform range grid using diffrax dense output.
 
     Parameters
     ----------
-    sols : list
-        List of {mod}`scipy.integrate._ivp.ivp.OdeResult` solutions, corresponding to integrated ray segments
+    sols : list of diffrax solution objects (with dense output)
     range_save : np.array (m,)
-        array of range values to save the ray state at
+        range values to evaluate ray state at
 
     Returns
     -------
-    full_ray_state : np.array (4,m)
-        4D array of ray state at each range_save point first dimension corresponds to [range, time, depth, pz], m is the number of range values to save
+    full_ray_state : np.array (4, m)
+        [range, travel_time, depth, pz] at each range_save point
     """
+    full_ray = np.ones((3, len(range_save) - 1)) * np.nan
 
-    full_ray = np.ones((3, len(range_save)-1))*np.nan
+    for sol in sols:
+        t0_seg = float(sol.ts[0])
+        t1_seg = float(sol.ts[-1])
+        # Use searchsorted to find indices strictly within [t0_seg, t1_seg].
+        # 'left' for idx1 ensures range_save[idx1] >= t0_seg.
+        # 'right' for idx2 ensures range_save[idx2-1] <= t1_seg.
+        idx1 = int(np.searchsorted(range_save, t0_seg, side='left'))
+        idx2 = int(np.searchsorted(range_save, t1_seg, side='right'))
+        idx2 = min(idx2, len(range_save) - 1)  # leave last point for appended final state
 
-    for k, sol in enumerate(sols):
-        idx1 = np.argmin(np.abs(range_save - sol.t[0]))
-        idx2 = np.argmin(np.abs(range_save - sol.t[-1]))
+        if idx1 >= idx2:
+            continue
 
-        if idx1 == idx2:
-            continue # Skip if no range points exist in segment
-        
-        full_ray[:, idx1:idx2] = sol.sol(range_save[idx1:idx2])
+        values = np.array(jax.vmap(sol.evaluate)(jnp.array(range_save[idx1:idx2])))  # (N, 3)
+        full_ray[:, idx1:idx2] = values.T
 
-
-    # Append final ray state to full_ray
-    full_ray = np.concatenate((full_ray, np.expand_dims(sols[-1].y[:,-1], axis=1)), axis=1)
-
-    # Append range values to full_ray
-    full_ray_state = np.concatenate((np.expand_dims(range_save, axis=0), full_ray), axis=0)
-
-    return full_ray_state
+    final_y = np.array(sols[-1].ys[-1])
+    full_ray = np.concatenate([full_ray, final_y[:, None]], axis=1)
+    return np.concatenate([range_save[None, :], full_ray], axis=0)
 
 
-__all__ = ['_shoot_ray_segment', 'shoot_rays', 'shoot_ray','_shoot_single_ray_process', '_unpack_envi', '_shoot_ray_array']
+__all__ = ['_shoot_ray_segment', 'shoot_rays', 'shoot_ray', '_unpack_envi', '_shoot_ray_array']

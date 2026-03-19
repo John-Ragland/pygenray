@@ -40,4 +40,4 @@ Respect this distinction when modifying ray integration or `Ray`/`RayFan` attrib
 
 ## Performance
 
-`derivsrd()` in `integration_processes.py` is JIT-compiled with Numba (`fastmath=True`). Avoid introducing pure-Python loops in hot paths. `shoot_rays()` uses multiprocessing — be careful with shared state.
+Hot-path interpolation functions (`bilinear_interp`, `linear_interp`) are decorated with `@jax.jit`; `derivsrd` and event conditions are compiled by diffrax as part of the ODE solver's XLA computation. Avoid introducing pure-Python loops in hot paths. `shoot_rays()` loops serially with tqdm (`n_processes` is deprecated/ignored); vmap support is planned.

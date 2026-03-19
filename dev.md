@@ -1,3 +1,8 @@
 1. Can you make the default to use x64, but add an option for the user to select x32 if they want?
 2. Is there anything that we should do with the memory management (replacing the shared memory methods) that would enable future GPU parallelization with vmap?
 3. Some thoughts on bottom and surface reflection events. When I was developing this, it took a lot of work to get the reflection events to be stable. You must place the ray position exactly on the boundary, but just change the vertical ray slowness (p). I had to custom design the event functions so that they didn't retrip imediately when I restarted the integration. Does the method that you've planned handle this correctly?
+
+
+
+## Things to add to documentation
+- set_precision() function
