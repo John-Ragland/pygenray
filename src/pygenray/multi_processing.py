@@ -1,20 +1,115 @@
-"""
-Shared-memory multiprocessing stubs. Multiprocessing has been removed in favour
-of JAX-based parallelism (vmap). These stubs preserve import compatibility for
-any code that imports from this module directly.
-"""
+from multiprocessing import shared_memory
+import numpy as np
+import uuid
+import os
 
 
-def _init_shared_memory(*args, **kwargs):
-    raise DeprecationWarning(
-        "Shared memory multiprocessing is removed. Use shoot_rays() sequentially; vmap support is coming."
-    )
+def _init_shared_memory(
+        cin,
+        cpin,
+        rin,
+        zin,
+        depths,
+        depth_ranges,
+        bottom_angle
+):
+    '''
+    Initialize shared memory for multiprocessing
+
+    Parameters
+    ----------
+    cin : np.array (m,n)
+        2D array of sound speed
+    cpin : np.array (m,n)
+        2D array of dc/dz
+    rin : np.array (m,)
+        range coordinate for c arrays
+    zin : np.array (n,)
+        depth coordinate for c arrays
+    depths : np.array(k,)
+        array of depths (meters)
+    depth_ranges : np.array(k,)
+        array of depth ranges (meters)
+    bottom_angle : np.array (k,)
+        array of bottom angles (degrees)
+
+    Returns
+    -------
+    array_metadata : dict
+        Dictionary containing metadata of shared memory arrays
+    shms : dict
+        Dictionary containing shared memory objects for each array
+    '''
+
+    # Create unique id, uses PID and shortened UUID to handle SLURM better
+    unique_id = f'{os.getpid()}_{uuid.uuid4().hex[:8]}'
+
+    shared_array_name_bases = [
+        'cin', 'cpin', 'rin', 'zin', 'depths', 'depth_ranges', 'bottom_angle'
+    ]
+
+    shared_arrays_np = {
+        f'cin_{unique_id}': cin,
+        f'cpin_{unique_id}': cpin,
+        f'rin_{unique_id}': rin,
+        f'zin_{unique_id}': zin,
+        f'depths_{unique_id}': depths,
+        f'depth_ranges_{unique_id}': depth_ranges,
+        f'bottom_angle_{unique_id}': bottom_angle,
+    }
+
+    shms = {}
+    shared_arrays = {}
+    array_metadata = {}
+
+    for var in shared_arrays_np:
+        shms[var] = shared_memory.SharedMemory(create=True, size=shared_arrays_np[var].nbytes, name=var)
+        shared_arrays[var] = np.ndarray(shared_arrays_np[var].shape, dtype=shared_arrays_np[var].dtype, buffer=shms[var].buf)
+        shared_arrays[var][:] = shared_arrays_np[var][:]
+        array_metadata[var] = {
+            'shape': shared_arrays_np[var].shape,
+            'dtype': shared_arrays_np[var].dtype,
+        }
+
+    return array_metadata, shms
 
 
-def _unpack_shared_memory(*args, **kwargs):
-    raise DeprecationWarning(
-        "Shared memory multiprocessing is removed. Use shoot_rays() sequentially; vmap support is coming."
-    )
+def _unpack_shared_memory(shared_array_metadata):
+    """
+    Unpack shared memory arrays from metadata
+
+    Parameters
+    ----------
+    shared_array_metadata : dict
+        Dictionary containing metadata of shared memory arrays
+
+    Returns
+    -------
+    shared_arrays : dict
+        Dictionary containing unpacked shared memory arrays with base names as keys
+    existing_shms : dict
+        Dictionary containing existing shared memory objects with unique names as keys
+    """
+
+    existing_shms = {}
+    shared_arrays = {}
+
+    base_names = ['cin', 'cpin', 'rin', 'zin', 'depths', 'depth_ranges', 'bottom_angle']
+
+    for var in shared_array_metadata:
+        existing_shms[var] = shared_memory.SharedMemory(name=var)
+
+        array = np.ndarray(
+            shared_array_metadata[var]['shape'],
+            dtype=shared_array_metadata[var]['dtype'],
+            buffer=existing_shms[var].buf)
+
+        for base_name in base_names:
+            if var.startswith(f'{base_name}_'):
+                shared_arrays[base_name] = array
+                break
+
+    return shared_arrays, existing_shms
 
 
 __all__ = ['_init_shared_memory', '_unpack_shared_memory']

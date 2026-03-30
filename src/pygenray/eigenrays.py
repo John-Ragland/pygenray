@@ -12,6 +12,7 @@ from jax import lax
 from tqdm import tqdm
 
 from .launch_rays import _shoot_single_ray_jax
+from ._utils import _float
 
 
 def find_eigenrays(
@@ -83,16 +84,16 @@ def find_eigenrays(
     if parallel:
         flatearth = kwargs.get('flatearth', True)
         cin, cpin, rin, zin, depths, depth_ranges, bottom_angles = _unpack_envi(environment, flatearth=flatearth)
-        cin_j = jnp.array(cin)
-        cpin_j = jnp.array(cpin)
-        rin_j = jnp.array(rin)
-        zin_j = jnp.array(zin)
-        depths_j = jnp.array(depths)
-        dr_j = jnp.array(depth_ranges)
-        bottom_angles_j = jnp.array(bottom_angles)
+        cin_j = jnp.array(cin, dtype=_float())
+        cpin_j = jnp.array(cpin, dtype=_float())
+        rin_j = jnp.array(rin, dtype=_float())
+        zin_j = jnp.array(zin, dtype=_float())
+        depths_j = jnp.array(depths, dtype=_float())
+        dr_j = jnp.array(depth_ranges, dtype=_float())
+        bottom_angles_j = jnp.array(bottom_angles, dtype=_float())
         env_arrays = (cin_j, cpin_j, rin_j, zin_j, depths_j, dr_j, bottom_angles_j)
         range_save = np.linspace(source_range, receiver_range, num_range_save)
-        range_save_j = jnp.array(range_save, dtype=jnp.float64)
+        range_save_j = jnp.array(range_save, dtype=_float())
 
     for rd_idx, receiver_depth in enumerate(receiver_depths):
         ## get initial bracketing rays
@@ -187,17 +188,17 @@ def _find_eigenrays_vmap(
     thetas_converged : (K,) float64 — launch angles (user convention degrees)
     convergeds : (K,) bool
     """
-    z1s_j = jnp.array(z1s, dtype=jnp.float64)
-    z2s_j = jnp.array(z2s, dtype=jnp.float64)
-    theta1s_j = jnp.array(theta1s, dtype=jnp.float64)
-    theta2s_j = jnp.array(theta2s, dtype=jnp.float64)
+    z1s_j = jnp.array(z1s, dtype=_float())
+    z2s_j = jnp.array(z2s, dtype=_float())
+    theta1s_j = jnp.array(theta1s, dtype=_float())
+    theta2s_j = jnp.array(theta2s, dtype=_float())
 
     _single = functools.partial(
         _find_single_eigenray_jax,
-        receiver_depth=jnp.float64(receiver_depth),
-        source_depth=jnp.float64(source_depth),
-        source_range=jnp.float64(source_range),
-        receiver_range=jnp.float64(receiver_range),
+        receiver_depth=_float()(receiver_depth),
+        source_depth=_float()(source_depth),
+        source_range=_float()(source_range),
+        receiver_range=_float()(receiver_range),
         range_save=range_save_j,
         env_arrays=env_arrays,
         max_iter=max_iter,
@@ -262,10 +263,10 @@ def _find_single_eigenray_jax(
         theta2,
         jnp.int32(0),                          # iter_count
         theta_rf0,                              # theta_rf (current guess)
-        jnp.full((N, 3), jnp.nan, dtype=jnp.float64),  # last_output
+        jnp.full((N, 3), jnp.nan, dtype=_float()),  # last_output
         jnp.int32(0),                          # last_n_bottom
         jnp.int32(0),                          # last_n_surface
-        jnp.float64(theta_rf0),               # theta_converged
+        _float()(theta_rf0),               # theta_converged
         jnp.bool_(False),                      # converged
     )
 
@@ -306,7 +307,7 @@ def _find_single_eigenray_jax(
 
         dz = z2_new - z1_new
         # Guard against degenerate bracket (avoid div-by-zero)
-        safe_dz = jnp.where(jnp.abs(dz) < 1e-10, jnp.float64(1e-10), dz)
+        safe_dz = jnp.where(jnp.abs(dz) < 1e-10, _float()(1e-10), dz)
         theta_rf_new = theta1_new - (z1_new + receiver_depth) * (theta2_new - theta1_new) / safe_dz
 
         # Record converged state

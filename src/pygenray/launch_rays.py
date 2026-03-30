@@ -10,6 +10,7 @@ import pygenray as pr
 from tqdm import tqdm
 
 from .integration_processes import derivsrd, bilinear_interp, linear_interp, ray_angle, event_cond
+from ._utils import _float
 
 
 def shoot_rays(
@@ -21,10 +22,9 @@ def shoot_rays(
         environment: pr.OceanEnvironment2D,
         rtol=1e-9,
         terminate_backwards: bool = True,
-        n_processes: int = None,  # deprecated, ignored
         debug: bool = True,
         flatearth: bool = True,
-        parallel: bool = True,
+        backend: str = "auto",
         max_bounces: int = 50,
 ):
     '''
@@ -48,15 +48,14 @@ def shoot_rays(
         relative tolerance for the ODE solver, default is 1e-9
     terminate_backwards : bool
         whether to terminate ray if it bounces backwards
-    n_processes : int
-        deprecated, ignored
     debug : bool
-        whether to print debug information (serial path only)
+        whether to print debug information (serial/multiprocessing paths only)
     flatearth : bool
         whether to transform environment to flat earth coordinates
-    parallel : bool
-        if True (default), use jax.vmap for parallel ray tracing;
-        if False, use serial tqdm loop
+    backend : str
+        compute backend: "auto" (default — GPU if available, else CPU multiprocessing),
+        "gpu" (JAX vmap on GPU/accelerator), "cpu" (multiprocessing across all CPU cores),
+        or "serial" (single core, for debugging)
     max_bounces : int
         maximum number of boundary bounces per ray (vmap path only)
 
@@ -76,18 +75,27 @@ def shoot_rays(
     if not (np.all(np.diff(depth_ranges) >= 0)):
         raise Exception('Bathymetry range coordinates must be monotonically increasing.')
 
-    cin_j = jnp.array(cin)
-    cpin_j = jnp.array(cpin)
-    rin_j = jnp.array(rin)
-    zin_j = jnp.array(zin)
-    depths_j = jnp.array(depths)
-    dr_j = jnp.array(depth_ranges)
-    bottom_angles_j = jnp.array(bottom_angles)
+    cin_j = jnp.array(cin, dtype=_float())
+    cpin_j = jnp.array(cpin, dtype=_float())
+    rin_j = jnp.array(rin, dtype=_float())
+    zin_j = jnp.array(zin, dtype=_float())
+    depths_j = jnp.array(depths, dtype=_float())
+    dr_j = jnp.array(depth_ranges, dtype=_float())
+    bottom_angles_j = jnp.array(bottom_angles, dtype=_float())
     env_arrays = (cin_j, cpin_j, rin_j, zin_j, depths_j, dr_j, bottom_angles_j)
 
     range_save = np.linspace(source_range, receiver_range, num_range_save)
 
-    if parallel:
+    if backend == "auto":
+        try:
+            gpu_devices = jax.devices("gpu")
+        except Exception:
+            gpu_devices = []
+        # On multi-GPU setups vmap is efficient; on single-GPU or CPU-only
+        # machines the serial path (Metal/JIT-warmed) is typically fastest.
+        backend = "gpu" if len(gpu_devices) > 1 else "serial"
+
+    if backend == "gpu":
         rays = _shoot_rays_vmap(
             launch_angles,
             source_depth, source_range, receiver_range,
@@ -97,30 +105,79 @@ def shoot_rays(
         )
         return rays
 
-    # Serial fallback
-    launch_angles_flipped = -launch_angles  # flip to match sign convention
+    elif backend == "cpu":
+        import os
+        import concurrent.futures
+        import multiprocessing
+        from .multi_processing import _init_shared_memory
+        from ._mp_worker import shoot_ray_worker, _warm_up_jit
 
-    rays_ls = []
-    for launch_angle in tqdm(launch_angles_flipped, desc="Computing ray fan"):
-        rays_ls.append(
-            shoot_ray(
-                source_depth,
-                source_range,
-                launch_angle,
-                receiver_range,
-                num_range_save,
-                environment,
-                rtol=rtol,
-                terminate_backwards=terminate_backwards,
-                debug=debug,
-                flatearth=flatearth,
-                _env_arrays=env_arrays,
-            )
+        # Set JAX_PLATFORM_NAME=cpu BEFORE creating the executor so spawned workers
+        # inherit it and initialize JAX with the CPU backend (avoids jax-metal crash).
+        _prev_platform = os.environ.get("JAX_PLATFORM_NAME")
+        os.environ["JAX_PLATFORM_NAME"] = "cpu"
+
+        env_np = [np.array(x) for x in env_arrays]
+        cin_np, cpin_np, rin_np, zin_np, depths_np, dr_np, ba_np = env_np
+        array_metadata, shms = _init_shared_memory(
+            cin_np, cpin_np, rin_np, zin_np, depths_np, dr_np, ba_np
         )
 
-    rays_ls_nonone = [ray for ray in rays_ls if ray is not None]
-    rays = pr.RayFan(rays_ls_nonone)
-    return rays
+        args_list = [
+            (array_metadata, float(angle), source_depth, source_range, receiver_range,
+             num_range_save, rtol, terminate_backwards, debug)
+            for angle in launch_angles
+        ]
+
+        env_shapes = [(arr.shape, arr.dtype) for arr in env_np]
+        ctx = multiprocessing.get_context("spawn")
+        try:
+            with concurrent.futures.ProcessPoolExecutor(
+                mp_context=ctx, initializer=_warm_up_jit, initargs=(env_shapes,)
+            ) as pool:
+                rays_ls = list(tqdm(
+                    pool.map(shoot_ray_worker, args_list),
+                    total=len(args_list),
+                    desc="Computing ray fan",
+                ))
+        finally:
+            if _prev_platform is None:
+                os.environ.pop("JAX_PLATFORM_NAME", None)
+            else:
+                os.environ["JAX_PLATFORM_NAME"] = _prev_platform
+            for shm in shms.values():
+                shm.close()
+                shm.unlink()
+
+        return pr.RayFan([r for r in rays_ls if r is not None])
+
+    elif backend == "serial":
+        launch_angles_flipped = -launch_angles
+
+        rays_ls = []
+        for launch_angle in tqdm(launch_angles_flipped, desc="Computing ray fan"):
+            rays_ls.append(
+                shoot_ray(
+                    source_depth,
+                    source_range,
+                    launch_angle,
+                    receiver_range,
+                    num_range_save,
+                    environment,
+                    rtol=rtol,
+                    terminate_backwards=terminate_backwards,
+                    debug=debug,
+                    flatearth=flatearth,
+                    _env_arrays=env_arrays,
+                )
+            )
+
+        rays_ls_nonone = [ray for ray in rays_ls if ray is not None]
+        return pr.RayFan(rays_ls_nonone)
+
+    else:
+        raise ValueError(f"backend must be 'auto', 'gpu', 'cpu', or 'serial', got {backend!r}")
+
 
 
 def _shoot_rays_vmap(
@@ -152,11 +209,11 @@ def _shoot_rays_vmap(
     pr.RayFan of valid rays
     """
     # Convert to JAX arrays
-    launch_angles_rad = jnp.radians(jnp.array(launch_angles, dtype=jnp.float64))
-    range_save_j = jnp.array(range_save, dtype=jnp.float64)
-    source_depth_j = jnp.float64(source_depth)
-    source_range_j = jnp.float64(source_range)
-    receiver_range_j = jnp.float64(receiver_range)
+    launch_angles_rad = jnp.radians(jnp.array(launch_angles, dtype=_float()))
+    range_save_j = jnp.array(range_save, dtype=_float())
+    source_depth_j = _float()(source_depth)
+    source_range_j = _float()(source_range)
+    receiver_range_j = _float()(receiver_range)
 
     # Build a partial with static args baked in, then vmap over launch_angles_rad
     _single = functools.partial(
@@ -239,13 +296,13 @@ def _shoot_single_ray_jax(
 
     c0 = bilinear_interp(source_range, source_depth, rin_j, zin_j, cin_j)
     p0 = jnp.sin(launch_angle_rad) / c0
-    y0 = jnp.array([jnp.float64(0.0), source_depth, p0])
+    y0 = jnp.array([_float()(0.0), source_depth, p0])
 
     N = range_save.shape[0]
-    output = jnp.full((N, 3), jnp.nan, dtype=jnp.float64)
+    output = jnp.full((N, 3), jnp.nan, dtype=_float())
 
     init_carry = (
-        jnp.float64(source_range),   # x_current
+        _float()(source_range),   # x_current
         y0,                           # y_current (3,)
         output,                       # output (N, 3)
         jnp.int32(0),                 # n_bottom
@@ -303,7 +360,7 @@ def _shoot_single_ray_jax(
             is_backwards = jnp.bool_(False)
 
         # Snap depth to boundary
-        y_new_depth = jnp.where(is_surface, jnp.float64(0.0), bd_end)
+        y_new_depth = jnp.where(is_surface, _float()(0.0), bd_end)
         y_new = jnp.array([y_end[0], y_new_depth, p_new])
 
         # A valid bounce: not at receiver, not failed
@@ -513,7 +570,7 @@ def _shoot_ray_array(
     n_bottom = 0
 
     while x_intermediate < receiver_range:
-        sol = _shoot_ray_segment(jnp.float64(x_intermediate), jnp.asarray(y_intermediate), jnp.float64(receiver_range), args, rtol=rtol)
+        sol = _shoot_ray_segment(_float()(x_intermediate), jnp.asarray(y_intermediate), _float()(receiver_range), args, rtol=rtol)
         sols.append(sol)
 
         x_f = float(sol.ts[-1])
@@ -538,7 +595,7 @@ def _shoot_ray_array(
             n_surface += 1
             y_intermediate[1] = 0.0  # snap exactly to surface
         elif y_f[1] >= bd_f - 1.0:
-            beta = float(linear_interp(jnp.float64(x_f), dr_j, bottom_angles_j))
+            beta = float(linear_interp(_float()(x_f), dr_j, bottom_angles_j))
             theta_bounce = 2 * beta - theta_f
             n_bottom += 1
             y_intermediate[1] = bd_f  # snap exactly to bottom

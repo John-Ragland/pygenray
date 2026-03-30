@@ -1,6 +1,9 @@
 """
 Shared test fixtures for pygenray tests.
 """
+import os
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
 import matplotlib
 matplotlib.use('Agg')
 

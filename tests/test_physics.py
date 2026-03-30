@@ -264,7 +264,7 @@ def _regenerate_fixture():
     env = _munk_env(r_max=50e3, nr=30, nz=400)
     angles = [-8.0, -4.0, 0.0, 4.0, 8.0]
     rf = shoot_rays(1300.0, 0.0, angles, 50e3, 50, env,
-                    n_processes=1, debug=False, flatearth=False)
+                    debug=False, flatearth=False)
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
     np.savez(
         FIXTURE_DIR / 'munk_regression.npz',
@@ -290,7 +290,7 @@ class TestMunkRegression:
     def _run_rays(self):
         env = _munk_env(r_max=50e3, nr=30, nz=400)
         return shoot_rays(1300.0, 0.0, self.ANGLES, 50e3, 50, env,
-                          n_processes=1, debug=False, flatearth=False)
+                          debug=False, flatearth=False)
 
     def test_regression(self, request):
         regenerate = request.config.getoption('--regenerate-physics',
