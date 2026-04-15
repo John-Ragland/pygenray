@@ -127,7 +127,7 @@ def shoot_rays(
                 terminate_backwards=terminate_backwards
             )
             
-            with mp.Pool(n_processes) as pool:
+            with mp.get_context('spawn').Pool(n_processes) as pool:
                 rays_ls = list(tqdm(pool.imap(shoot_ray_part, y0s), total=len(y0s), desc="Computing ray fan"))
 
             ranges = np.linspace(source_range, receiver_range, num_range_save)

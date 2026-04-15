@@ -347,7 +347,7 @@ def _process_ranges_chunked_parallel(c, r_chunks, n_cpus):
     
     # Run in parallel with progress bar
     all_results = []
-    with mp.Pool(processes=n_cpus) as pool:
+    with mp.get_context('spawn').Pool(processes=n_cpus) as pool:
         for chunk_results in tqdm(
             pool.imap(_process_chunk_worker, args_list), 
             total=len(r_chunks),
