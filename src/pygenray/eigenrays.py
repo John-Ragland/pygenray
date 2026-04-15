@@ -127,7 +127,7 @@ def find_eigenrays(
             # map individual eigen ray finding to different workers
             if num_workers is None:
                 num_workers = mp.cpu_count()
-            with mp.Pool(num_workers) as pool:
+            with mp.get_context('spawn').Pool(num_workers) as pool:
                 results = list(tqdm(pool.imap(_find_single_eigenray, args_list), total=len(args_list), desc="Finding eigenrays"))
             
             # Filter out None results and add successful rays
