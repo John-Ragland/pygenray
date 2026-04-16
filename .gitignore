@@ -1,5 +1,6 @@
 dev/
 __pycache__/
+src/pygenray/__about__.py
 .DS_Store
 docs/_build/
 dist/
