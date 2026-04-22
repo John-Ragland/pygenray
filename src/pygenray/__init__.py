@@ -27,6 +27,5 @@ def set_device(device: str = 'cpu') -> None:
 from .environment import *
 from .launch_rays import *
 from .integration_processes import *
-from .multi_processing import *
 from .eigenrays import *
 from .ray_objects import *

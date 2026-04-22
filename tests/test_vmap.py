@@ -39,8 +39,8 @@ def _munk_env(r_max=100e3, nr=50, nz=600, bathy_depth=5000.0):
 # A.  vmap matches serial for shoot_rays
 # ---------------------------------------------------------------------------
 
-class TestGpuMatchesSerial:
-    """gpu (vmap) and serial shoot_rays produce numerically identical ray paths."""
+class TestVmapMatchesSerial:
+    """vmap and serial shoot_rays produce numerically identical ray paths."""
 
     def _compare_fans(self, fan_serial, fan_vmap, atol_t=1e-6, atol_z=0.1):
         """Helper: assert serial and vmap fans agree in travel time and depth."""
@@ -69,7 +69,7 @@ class TestGpuMatchesSerial:
             environment=env, flatearth=False, debug=False,
         )
         fan_serial = shoot_rays(launch_angles=np.array(angles), backend="serial", **kwargs)
-        fan_vmap   = shoot_rays(launch_angles=np.array(angles), backend="gpu",  **kwargs)
+        fan_vmap   = shoot_rays(launch_angles=np.array(angles), backend="vmap",  **kwargs)
         self._compare_fans(fan_serial, fan_vmap)
 
     @pytest.mark.parametrize("angles", [
@@ -84,7 +84,7 @@ class TestGpuMatchesSerial:
             environment=env, flatearth=False, debug=False,
         )
         fan_serial = shoot_rays(launch_angles=np.array(angles), backend="serial", **kwargs)
-        fan_vmap   = shoot_rays(launch_angles=np.array(angles), backend="gpu",  **kwargs)
+        fan_vmap   = shoot_rays(launch_angles=np.array(angles), backend="vmap",  **kwargs)
         self._compare_fans(fan_serial, fan_vmap)
 
     def test_launch_angles_stored_correctly(self):
@@ -94,7 +94,7 @@ class TestGpuMatchesSerial:
         fan = shoot_rays(
             launch_angles=angles, source_depth=100.0, source_range=0.0,
             receiver_range=50e3, num_range_save=10, environment=env,
-            flatearth=False, debug=False, backend="gpu",
+            flatearth=False, debug=False, backend="vmap",
         )
         np.testing.assert_array_equal(fan.thetas, angles)
 
@@ -117,7 +117,7 @@ class TestVmapFailedRays:
             environment=env, flatearth=False, debug=False,
         )
         fan_serial = shoot_rays(launch_angles=angles, backend="serial", **kwargs)
-        fan_vmap   = shoot_rays(launch_angles=angles, backend="gpu",  **kwargs)
+        fan_vmap   = shoot_rays(launch_angles=angles, backend="vmap",  **kwargs)
         assert len(fan_serial) == len(fan_vmap), (
             f"Valid ray count differs: serial {len(fan_serial)}, vmap {len(fan_vmap)}"
         )
@@ -140,7 +140,7 @@ class TestEigenrayVmapMatchesSerial:
         fan = shoot_rays(
             launch_angles=angles, source_depth=source_depth, source_range=0.0,
             receiver_range=receiver_range, num_range_save=num_range_save,
-            environment=env, flatearth=False, debug=False, backend="gpu",
+            environment=env, flatearth=False, debug=False, backend="vmap",
         )
 
         receiver_depths = [200.0, 500.0]
@@ -180,55 +180,3 @@ class TestEigenrayVmapMatchesSerial:
                     z_vmap, -rd * np.ones_like(z_vmap), atol=ztol * 2,
                     err_msg=f"vmap eigenray depth not near receiver depth {rd}"
                 )
-
-
-# ---------------------------------------------------------------------------
-# D.  multiprocessing backend matches serial
-# ---------------------------------------------------------------------------
-
-class TestCpuMatchesSerial:
-    """cpu (multiprocessing) and serial shoot_rays produce numerically identical ray paths."""
-
-    def _compare_fans(self, fan_serial, fan_mp, atol_t=1e-6, atol_z=0.1):
-        assert len(fan_serial) == len(fan_mp), (
-            f"Ray count differs: serial {len(fan_serial)}, multiprocessing {len(fan_mp)}"
-        )
-        for i in range(len(fan_serial)):
-            np.testing.assert_allclose(
-                fan_serial.ts[i], fan_mp.ts[i], atol=atol_t,
-                err_msg=f"Travel time mismatch at ray {i}"
-            )
-            np.testing.assert_allclose(
-                fan_serial.zs[i], fan_mp.zs[i], atol=atol_z,
-                err_msg=f"Depth mismatch at ray {i}"
-            )
-
-    @pytest.mark.parametrize("angles", [
-        [-5.0, 0.0, 5.0],
-        [-10.0, -5.0, 5.0, 10.0],
-    ])
-    def test_const_c(self, angles):
-        env = _const_c_env()
-        kwargs = dict(
-            source_depth=100.0, source_range=0.0,
-            receiver_range=50e3, num_range_save=20,
-            environment=env, flatearth=False, debug=False,
-        )
-        fan_serial = shoot_rays(launch_angles=np.array(angles), backend="serial", **kwargs)
-        fan_mp     = shoot_rays(launch_angles=np.array(angles), backend="cpu", **kwargs)
-        self._compare_fans(fan_serial, fan_mp)
-
-    @pytest.mark.parametrize("angles", [
-        [-5.0, 0.0, 5.0],
-        [-10.0, -5.0, 5.0, 10.0],
-    ])
-    def test_munk(self, angles):
-        env = _munk_env()
-        kwargs = dict(
-            source_depth=800.0, source_range=0.0,
-            receiver_range=50e3, num_range_save=20,
-            environment=env, flatearth=False, debug=False,
-        )
-        fan_serial = shoot_rays(launch_angles=np.array(angles), backend="serial", **kwargs)
-        fan_mp     = shoot_rays(launch_angles=np.array(angles), backend="cpu", **kwargs)
-        self._compare_fans(fan_serial, fan_mp)

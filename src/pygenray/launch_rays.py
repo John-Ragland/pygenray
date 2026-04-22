@@ -24,7 +24,7 @@ def shoot_rays(
         terminate_backwards: bool = True,
         debug: bool = True,
         flatearth: bool = True,
-        backend: str = "auto",
+        backend: str = "vmap",
         max_bounces: int = 50,
 ):
     '''
@@ -49,13 +49,12 @@ def shoot_rays(
     terminate_backwards : bool
         whether to terminate ray if it bounces backwards
     debug : bool
-        whether to print debug information (serial/multiprocessing paths only)
+        whether to print debug information (serial path only)
     flatearth : bool
         whether to transform environment to flat earth coordinates
     backend : str
-        compute backend: "auto" (default — GPU if available, else CPU multiprocessing),
-        "gpu" (JAX vmap on GPU/accelerator), "cpu" (multiprocessing across all CPU cores),
-        or "serial" (single core, for debugging)
+        compute backend: "vmap" (default — JAX vmap, works on CPU and GPU) or
+        "serial" (single core, for debugging)
     max_bounces : int
         maximum number of boundary bounces per ray (vmap path only)
 
@@ -86,16 +85,7 @@ def shoot_rays(
 
     range_save = np.linspace(source_range, receiver_range, num_range_save)
 
-    if backend == "auto":
-        try:
-            gpu_devices = jax.devices("gpu")
-        except Exception:
-            gpu_devices = []
-        # On multi-GPU setups vmap is efficient; on single-GPU or CPU-only
-        # machines the serial path (Metal/JIT-warmed) is typically fastest.
-        backend = "gpu" if len(gpu_devices) > 1 else "serial"
-
-    if backend == "gpu":
+    if backend == "vmap":
         rays = _shoot_rays_vmap(
             launch_angles,
             source_depth, source_range, receiver_range,
@@ -104,52 +94,6 @@ def shoot_rays(
             terminate_backwards=terminate_backwards,
         )
         return rays
-
-    elif backend == "cpu":
-        import os
-        import concurrent.futures
-        import multiprocessing
-        from .multi_processing import _init_shared_memory
-        from ._mp_worker import shoot_ray_worker, _warm_up_jit
-
-        # Set JAX_PLATFORM_NAME=cpu BEFORE creating the executor so spawned workers
-        # inherit it and initialize JAX with the CPU backend (avoids jax-metal crash).
-        _prev_platform = os.environ.get("JAX_PLATFORM_NAME")
-        os.environ["JAX_PLATFORM_NAME"] = "cpu"
-
-        env_np = [np.array(x) for x in env_arrays]
-        cin_np, cpin_np, rin_np, zin_np, depths_np, dr_np, ba_np = env_np
-        array_metadata, shms = _init_shared_memory(
-            cin_np, cpin_np, rin_np, zin_np, depths_np, dr_np, ba_np
-        )
-
-        args_list = [
-            (array_metadata, float(angle), source_depth, source_range, receiver_range,
-             num_range_save, rtol, terminate_backwards, debug)
-            for angle in launch_angles
-        ]
-
-        env_shapes = [(arr.shape, arr.dtype) for arr in env_np]
-        ctx = multiprocessing.get_context("spawn")
-        try:
-            with concurrent.futures.ProcessPoolExecutor(
-                mp_context=ctx, initializer=_warm_up_jit, initargs=(env_shapes,)
-            ) as pool:
-                rays_ls = list(tqdm(
-                    pool.map(shoot_ray_worker, args_list),
-                    total=len(args_list),
-                    desc="Computing ray fan",
-                ))
-        finally:
-            if _prev_platform is None:
-                os.environ.pop("JAX_PLATFORM_NAME", None)
-            else:
-                os.environ["JAX_PLATFORM_NAME"] = _prev_platform
-            for shm in shms.values():
-                shm.close()
-                shm.unlink()
-
-        return pr.RayFan([r for r in rays_ls if r is not None])
 
     elif backend == "serial":
         launch_angles_flipped = -launch_angles
@@ -176,7 +120,7 @@ def shoot_rays(
         return pr.RayFan(rays_ls_nonone)
 
     else:
-        raise ValueError(f"backend must be 'auto', 'gpu', 'cpu', or 'serial', got {backend!r}")
+        raise ValueError(f"backend must be 'vmap' or 'serial', got {backend!r}")
 
 
 
