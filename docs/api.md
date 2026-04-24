@@ -3,6 +3,7 @@
 ## Environment Specification
 ```{eval-rst}
 .. automodule:: pygenray.environment
+    :members:
 ```
 
 ## Launch Rays
