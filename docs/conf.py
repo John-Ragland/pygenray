@@ -6,7 +6,7 @@ import os
 import sys
 
 # Add the source directory to the path so Sphinx can import the modules
-sys.path.insert(0, os.path.abspath('../src'))
+sys.path.insert(0, os.path.abspath("../src"))
 
 project = "pygenray"
 copyright = "2025, John Ragland"
