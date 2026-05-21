@@ -85,7 +85,12 @@ def derivsrd(
     cp = bilinear_interp(x,z,rin,zin,cpin)
 
     # calculate derivatives
-    fact=1/np.sqrt(1-(c**2)*(pz**2))
+    # clamp to avoid division by zero when a Runge-Kutta intermediate stage
+    # lands on an exactly vertical ray before the vertical_ray event can fire
+    arg = 1.0 - (c**2) * (pz**2)
+    if arg <= 0.0:
+        arg = 1e-30
+    fact=1/np.sqrt(arg)
     dydx = np.array([
         fact/c,
         c*pz*fact,
