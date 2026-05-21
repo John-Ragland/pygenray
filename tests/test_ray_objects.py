@@ -1,6 +1,7 @@
 """
 Tests for pygenray.ray_objects: Ray, RayFan.
 """
+
 import numpy as np
 import pytest
 import scipy.io
@@ -13,19 +14,27 @@ from pygenray.ray_objects import Ray, RayFan
 # Ray
 # ---------------------------------------------------------------------------
 
+
 class TestRay:
     N = 10
     R = 10000.0
 
-    def _make_ray(self, launch_angle=-10.0, source_depth=100.0,
-                  n_bottom=0, n_surface=0):
+    def _make_ray(
+        self, launch_angle=-10.0, source_depth=100.0, n_bottom=0, n_surface=0
+    ):
         r = np.linspace(0.0, self.R, self.N)
         t = r / 1500.0
         z_ode = np.linspace(source_depth, source_depth + self.R * 0.01, self.N)
         p_ode = np.ones(self.N) * np.sin(np.radians(abs(launch_angle) + 1e-3)) / 1500.0
         y = np.vstack([t, z_ode, p_ode])
-        return Ray(r=r, y=y, n_bottom=n_bottom, n_surface=n_surface,
-                   launch_angle=launch_angle, source_depth=source_depth), y
+        return Ray(
+            r=r,
+            y=y,
+            n_bottom=n_bottom,
+            n_surface=n_surface,
+            launch_angle=launch_angle,
+            source_depth=source_depth,
+        ), y
 
     def test_attribute_shapes(self):
         ray, _ = self._make_ray()
@@ -57,14 +66,14 @@ class TestRay:
         t = r / 1500.0
         y = np.vstack([t, np.ones(self.N) * 100.0, np.ones(self.N) * 0.1])
         ray = Ray(r=r, y=y, n_bottom=0, n_surface=0)
-        assert not hasattr(ray, 'launch_angle')
+        assert not hasattr(ray, "launch_angle")
 
     def test_optional_source_depth_not_set(self):
         r = np.linspace(0.0, self.R, self.N)
         t = r / 1500.0
         y = np.vstack([t, np.ones(self.N) * 100.0, np.ones(self.N) * 0.1])
         ray = Ray(r=r, y=y, n_bottom=0, n_surface=0)
-        assert not hasattr(ray, 'source_depth')
+        assert not hasattr(ray, "source_depth")
 
     def test_n_bottom_n_surface_stored(self):
         ray, _ = self._make_ray(n_bottom=3, n_surface=1)
@@ -75,12 +84,13 @@ class TestRay:
         ray, _ = self._make_ray()
         plt.figure()
         ray.plot()
-        plt.close('all')
+        plt.close("all")
 
 
 # ---------------------------------------------------------------------------
 # RayFan
 # ---------------------------------------------------------------------------
+
 
 class TestRayFan:
     M = 3
@@ -100,8 +110,14 @@ class TestRayFan:
             p_ode = np.ones(N) * np.sin(np.radians(abs(theta) + 1e-3)) / 1500.0
             y = np.vstack([t, z_ode, p_ode])
             rays.append(
-                Ray(r=r, y=y, n_bottom=i % 2, n_surface=0,
-                    launch_angle=theta, source_depth=100.0 + i * 50)
+                Ray(
+                    r=r,
+                    y=y,
+                    n_bottom=i % 2,
+                    n_surface=0,
+                    launch_angle=theta,
+                    source_depth=100.0 + i * 50,
+                )
             )
         return rays
 
@@ -119,7 +135,7 @@ class TestRayFan:
         assert rf.source_depths.shape == (self.M,)
 
     def test_ray_ids_set_on_construction(self, simple_rayfan):
-        assert hasattr(simple_rayfan, 'ray_ids')
+        assert hasattr(simple_rayfan, "ray_ids")
         assert len(simple_rayfan.ray_ids) == self.M
 
     # --- compute_rayids ---
@@ -187,8 +203,9 @@ class TestRayFan:
         result = simple_rayfan[idx]
         assert isinstance(result, RayFan)
         assert len(result) == 2
-        np.testing.assert_array_equal(result.thetas,
-                                      simple_rayfan.thetas[np.array([0, 2])])
+        np.testing.assert_array_equal(
+            result.thetas, simple_rayfan.thetas[np.array([0, 2])]
+        )
 
     # --- __add__ ---
 
@@ -225,54 +242,61 @@ class TestRayFan:
     # --- save_mat ---
 
     def test_save_mat_creates_file(self, simple_rayfan, tmp_path):
-        path = str(tmp_path / 'test_rayfan.mat')
+        path = str(tmp_path / "test_rayfan.mat")
         simple_rayfan.save_mat(path)
-        assert (tmp_path / 'test_rayfan.mat').exists()
+        assert (tmp_path / "test_rayfan.mat").exists()
 
     def test_save_mat_loadable(self, simple_rayfan, tmp_path):
-        path = str(tmp_path / 'test_rayfan.mat')
+        path = str(tmp_path / "test_rayfan.mat")
         simple_rayfan.save_mat(path)
         data = scipy.io.loadmat(path)
-        assert 'rayfan' in data
+        assert "rayfan" in data
 
     def test_save_mat_contains_required_keys(self, simple_rayfan, tmp_path):
-        path = str(tmp_path / 'test_rayfan.mat')
+        path = str(tmp_path / "test_rayfan.mat")
         simple_rayfan.save_mat(path)
         data = scipy.io.loadmat(path)
-        rayfan = data['rayfan']
+        rayfan = data["rayfan"]
         # MATLAB struct stored as structured array; check dtype field names
-        expected_keys = {'thetas', 'xs', 'ts', 'zs', 'ps',
-                         'n_botts', 'n_surfs', 'source_depths'}
+        expected_keys = {
+            "thetas",
+            "xs",
+            "ts",
+            "zs",
+            "ps",
+            "n_botts",
+            "n_surfs",
+            "source_depths",
+        }
         actual_keys = set(rayfan.dtype.names)
         assert expected_keys <= actual_keys
 
     def test_save_mat_values_match(self, simple_rayfan, tmp_path):
-        path = str(tmp_path / 'test_rayfan.mat')
+        path = str(tmp_path / "test_rayfan.mat")
         simple_rayfan.save_mat(path)
         data = scipy.io.loadmat(path)
-        rayfan = data['rayfan']
-        saved_thetas = rayfan['thetas'][0, 0].flatten()
-        np.testing.assert_allclose(saved_thetas, simple_rayfan.thetas,
-                                   atol=1e-10)
+        rayfan = data["rayfan"]
+        saved_thetas = rayfan["thetas"][0, 0].flatten()
+        np.testing.assert_allclose(saved_thetas, simple_rayfan.thetas, atol=1e-10)
 
     # --- Plotting smoke tests ---
 
     def test_plot_ray_fan_smoke(self, simple_rayfan):
         plt.figure()
         simple_rayfan.plot_ray_fan()
-        plt.close('all')
+        plt.close("all")
 
     def test_plot_time_front_smoke(self, simple_rayfan):
         plt.figure()
         simple_rayfan.plot_time_front()
-        plt.close('all')
+        plt.close("all")
 
     def test_plot_time_front_include_lines_smoke(self, simple_rayfan):
         plt.figure()
         simple_rayfan.plot_time_front(include_lines=True)
-        plt.close('all')
+        plt.close("all")
 
     def test_plot_depth_v_angle_smoke(self, simple_rayfan):
         plt.figure()
         simple_rayfan.plot_depth_v_angle()
-        plt.close('all')
+        plt.close("all")
