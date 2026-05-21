@@ -322,3 +322,43 @@ class TestMunkRegression:
         np.testing.assert_array_equal(rf.n_surfs, ref['n_surfs'])
 
 
+# ---------------------------------------------------------------------------
+# F.  Near-vertical ray — regression for ZeroDivisionError in derivsrd
+# ---------------------------------------------------------------------------
+
+class TestNearVerticalRay:
+    """
+    Shooting a ray at or near 90° causes pz = sin(θ)/c ≈ 1/c, making
+    1 - c²·pz² → 0 in derivsrd. The vertical_ray event terminates
+    integration, but scipy evaluates derivsrd at RK intermediate stages
+    before checking events.  These tests verify no ZeroDivisionError is raised.
+    """
+
+    def test_near_vertical_no_crash(self):
+        """A ray launched at 89.9° (user: -89.9) must not raise ZeroDivisionError."""
+        env = _const_c_env(c0=1500.0, z_max=5000.0, r_max=100e3, bathy_depth=4500.0)
+        try:
+            ray = shoot_ray(200.0, 0.0, -89.9, 10e3, 50, env,
+                            rtol=1e-6, flatearth=False, debug=False)
+        except ZeroDivisionError:
+            pytest.fail("ZeroDivisionError raised for near-vertical ray (θ ≈ 89.9°)")
+
+    def test_exactly_vertical_no_crash(self):
+        """A ray launched at exactly 90° must not raise ZeroDivisionError."""
+        env = _const_c_env(c0=1500.0, z_max=5000.0, r_max=100e3, bathy_depth=4500.0)
+        try:
+            ray = shoot_ray(200.0, 0.0, -90.0, 10e3, 50, env,
+                            rtol=1e-6, flatearth=False, debug=False)
+        except ZeroDivisionError:
+            pytest.fail("ZeroDivisionError raised for exactly vertical ray (θ = 90°)")
+
+    @pytest.mark.parametrize("angle", [-85.0, -87.0, -89.0, -89.9, -90.0])
+    def test_steep_rays_no_crash(self, angle):
+        """Steep rays near-vertical must not crash regardless of launch angle."""
+        env = _munk_env(r_max=50e3)
+        try:
+            shoot_ray(1000.0, 0.0, angle, 10e3, 50, env,
+                      rtol=1e-6, flatearth=False, debug=False)
+        except ZeroDivisionError:
+            pytest.fail(f"ZeroDivisionError raised for steep ray at θ = {angle}°")
+
