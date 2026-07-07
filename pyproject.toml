@@ -40,7 +40,6 @@ docs = [
   "sphinx-copybutton",
   "sphinx-autodoc-typehints",
 ]
-
 [project.urls]
 Documentation = "https://github.com/John Ragland/pygenray#readme"
 Issues = "https://github.com/John Ragland/pygenray/issues"
@@ -82,4 +81,5 @@ exclude_lines = [
 dev = [
     "pytest>=8.3.5",
     "pytest-cov>=5.0.0",
+    "ipykernel",
 ]
