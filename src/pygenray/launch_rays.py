@@ -567,10 +567,14 @@ def _shoot_ray_segment(
     vertical_ray = pr.vertical_ray
     vertical_ray.terminal = True
 
+    ray_bbox = pr.ray_bounding_box_event
+    ray_bbox.terminal = True
+
     events = (
         surface_event,
         bottom_event,
         vertical_ray,
+        ray_bbox,
     )
 
     sol = scipy.integrate.solve_ivp(
