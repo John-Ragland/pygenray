@@ -284,16 +284,23 @@ def ray_bounding_box_event(x, y, cin, cpin, rin, zin, depths, depth_ranges):
 
     Returns
     -------
-    bbox : bool
-        True if ray is outside bounding box, False otherwise
+    bbox : float
+        1.0 if ray is outside bounding box, -1.0 otherwise
     """
 
     z = y[1]
 
-    bbox = (z > zin[-1]) | (z < zin[0]) | (x < rin[0]) | (x > rin[-1])
-    if bbox:
-        print("bbox event triggered", z, zin[-1], zin[0], x, rin[0], rin[-1])
-    return bbox
+    # small tolerance to avoid spurious triggers from floating-point noise
+    # when the domain edge coincides with another event boundary (e.g. z=0 surface)
+    tol = 1e-6
+
+    bbox = (
+        (z > zin[-1] + tol)
+        | (z < zin[0] - tol)
+        | (x < rin[0] - tol)
+        | (x > rin[-1] + tol)
+    )
+    return 1.0 if bbox else -1.0
 
 
 @numba.njit(fastmath=True, cache=True)

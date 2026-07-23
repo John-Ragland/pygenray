@@ -117,6 +117,19 @@ def shoot_rays(
         return rays
 
     else:  # Use multiprocessing
+        # backwards shot (source_range > receiver_range): mirror the
+        # environment about the range axis so the existing forward-only
+        # integration code can be reused unmodified, then un-mirror the
+        # resulting range values.
+        backwards = receiver_range < source_range
+        if backwards:
+            cin, cpin, rin, depths, depth_ranges, bottom_angles = _mirror_envi_arrays(
+                cin, cpin, rin, depths, depth_ranges, bottom_angles
+            )
+            source_range_i, receiver_range_i = -source_range, -receiver_range
+        else:
+            source_range_i, receiver_range_i = source_range, receiver_range
+
         # Create Shared Arrays
         array_metadata, shms = pr._init_shared_memory(
             cin, cpin, rin, zin, depths, depth_ranges, bottom_angles
@@ -124,7 +137,7 @@ def shoot_rays(
 
         try:
             # calculate initial ray parameter
-            c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
+            c = pr.bilinear_interp(source_range_i, source_depth, rin, zin, cin)
             y0s = [
                 np.array([0, source_depth, np.sin(np.radians(launch_angle)) / c])
                 for launch_angle in launch_angles
@@ -132,9 +145,9 @@ def shoot_rays(
 
             shoot_ray_part = partial(
                 _shoot_single_ray_process,
-                source_range=source_range,
+                source_range=source_range_i,
                 source_depth=source_depth,
-                receiver_range=receiver_range,
+                receiver_range=receiver_range_i,
                 num_range_save=num_range_save,
                 array_metadata=array_metadata,
                 rtol=rtol,
@@ -150,8 +163,6 @@ def shoot_rays(
                     )
                 )
 
-            # ranges = np.linspace(source_range, receiver_range, num_range_save)
-
             # unpack results
             rays_list = []
             rays_list_idx = 0  # Add separate counter for rays_list
@@ -160,6 +171,8 @@ def shoot_rays(
                     continue
                 else:
                     # reinterpolate ray to range grid
+                    if backwards:
+                        single_ray.r = -single_ray.r
                     rays_list.append(single_ray)
 
                     # _shoot_single_ray_process does not save launch angle in ray object
@@ -255,16 +268,28 @@ def shoot_ray(
             "Bathymetry range coordinates must be monotonically increasing."
         )
 
+    # backwards shot (source_range > receiver_range): mirror the environment
+    # about the range axis so the existing forward-only integration code can
+    # be reused unmodified, then un-mirror the resulting range values.
+    backwards = receiver_range < source_range
+    if backwards:
+        cin, cpin, rin, depths, depth_ranges, bottom_angles = _mirror_envi_arrays(
+            cin, cpin, rin, depths, depth_ranges, bottom_angles
+        )
+        source_range_i, receiver_range_i = -source_range, -receiver_range
+    else:
+        source_range_i, receiver_range_i = source_range, receiver_range
+
     # calculate y0
-    c = pr.bilinear_interp(source_range, source_depth, rin, zin, cin)
+    c = pr.bilinear_interp(source_range_i, source_depth, rin, zin, cin)
     y0 = np.array([0, source_depth, np.sin(np.radians(launch_angle)) / c])
 
     # launch ray at angle theta
     sols, full_ray, n_bottom, n_surface = _shoot_ray_array(
         y0,
         source_depth,
-        source_range,
-        receiver_range,
+        source_range_i,
+        receiver_range_i,
         cin,
         cpin,
         rin,
@@ -281,8 +306,10 @@ def shoot_ray(
         return None
     else:
         # reinterpolate ray to range grid
-        range_save = np.linspace(source_range, receiver_range, num_range_save)
+        range_save = np.linspace(source_range_i, receiver_range_i, num_range_save)
         full_ray = _interpolate_ray(sols, range_save)
+        if backwards:
+            full_ray[0, :] = -full_ray[0, :]
         ray = pr.Ray(
             full_ray[0, :],
             full_ray[1:, :],
@@ -417,6 +444,14 @@ def _shoot_ray_array(
             if debug:
                 print(
                     f"ray is vertical at x={sol.t[-1]}, y={sol.y[1, -1]}, terminating integration"
+                )
+            return None, None, None, None
+
+        # Ray Bounding Box
+        elif len(sol.t_events[3]) > 0:  # ray bounding box event
+            if debug:
+                print(
+                    f"ray left bounding box at x={sol.t[-1]}, y={sol.y[1, -1]}, terminating integration"
                 )
             return None, None, None, None
 
@@ -622,10 +657,14 @@ def _shoot_ray_segment(
     vertical_ray = pr.vertical_ray
     vertical_ray.terminal = True
 
+    ray_bbox = pr.ray_bounding_box_event
+    ray_bbox.terminal = True
+
     events = (
         surface_event,
         bottom_event,
         vertical_ray,
+        ray_bbox,
     )
 
     sol = scipy.integrate.solve_ivp(
@@ -640,6 +679,39 @@ def _shoot_ray_segment(
     )
 
     return sol
+
+
+def _mirror_envi_arrays(cin, cpin, rin, depths, depth_ranges, bottom_angles):
+    """
+    Reflect environment arrays about the range axis (x' = -x), so that a
+    backwards shot (source_range > receiver_range) can be integrated as an
+    equivalent forward shot in the mirrored frame.
+
+    Parameters
+    ----------
+    cin, cpin : np.array (m,n)
+        sound speed and dc/dz arrays
+    rin : np.array (m,)
+        range coordinate for c arrays, must be monotonically increasing
+    depths, depth_ranges : np.array (k,)
+        bathymetry depth values and their range coordinates, depth_ranges
+        must be monotonically increasing
+
+    Returns
+    -------
+    cin, cpin, rin, depths, depth_ranges, bottom_angles : np.array
+        mirrored copies of the input arrays, with range coordinates still
+        monotonically increasing
+    """
+
+    rin_m = -rin[::-1]
+    cin_m = cin[::-1, :]
+    cpin_m = cpin[::-1, :]
+    depth_ranges_m = -depth_ranges[::-1]
+    depths_m = depths[::-1]
+    bottom_angles_m = -bottom_angles[::-1]
+
+    return cin_m, cpin_m, rin_m, depths_m, depth_ranges_m, bottom_angles_m
 
 
 def _unpack_envi(environment, flatearth=True):

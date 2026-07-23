@@ -453,3 +453,127 @@ class TestNearVerticalRay:
             )
         except ZeroDivisionError:
             pytest.fail(f"ZeroDivisionError raised for steep ray at θ = {angle}°")
+
+
+# ---------------------------------------------------------------------------
+# G.  Backwards shooting (source_range > receiver_range)
+# ---------------------------------------------------------------------------
+
+
+class TestBackwardsShooting:
+    """
+    `shoot_ray`/`shoot_rays` mirror the environment about the range axis
+    when source_range > receiver_range, then un-mirror the result. These
+    tests check that the endpoints/physics of a backwards shot are correct,
+    and that a backwards shot matches the equivalent shot in a manually
+    mirrored environment (the ground truth for what "backwards" should mean).
+    """
+
+    def test_endpoints_and_p_constant(self):
+        """Backwards shot in a constant-c medium: endpoints exact, |p| constant."""
+        c0 = 1500.0
+        env = _const_c_env(c0=c0)
+        ray = shoot_ray(
+            200.0, 30e3, -10.0, 0.0, 60, env, rtol=1e-9, flatearth=False, debug=False
+        )
+        assert ray is not None
+        assert ray.r[0] == 30e3
+        assert ray.r[-1] == 0.0
+
+        abs_p = np.abs(ray.p)
+        assert np.std(abs_p) / np.mean(abs_p) < 1e-5
+
+    def test_matches_manually_mirrored_environment(self):
+        """
+        A backwards shot in `env` must match a forward shot over the same
+        launch angle in an environment whose sound speed and bathymetry
+        have been manually mirrored about the range axis. This is the
+        ground-truth definition of "backwards" and exercises a case with
+        both bottom and surface bounces.
+        """
+        z = np.linspace(0.0, 6000.0, 400)
+        r = np.linspace(0.0, 100e3, 80)
+        # range-dependent perturbation so mirroring is non-trivial
+        c_2d = np.array([munk_ssp(z, sofar_depth=1300 + 0.01 * ri) for ri in r])
+        bathy_vals = np.linspace(4500.0, 4900.0, len(r))
+
+        ssp = xr.DataArray(
+            c_2d, dims=["range", "depth"], coords={"range": r, "depth": z}
+        )
+        bathy = xr.DataArray(bathy_vals, dims=["range"], coords={"range": r})
+        env = OceanEnvironment2D(
+            sound_speed=ssp, bathymetry=bathy, flat_earth_transform=False
+        )
+
+        ssp_m = xr.DataArray(
+            c_2d[::-1, :], dims=["range", "depth"], coords={"range": r, "depth": z}
+        )
+        bathy_m = xr.DataArray(bathy_vals[::-1], dims=["range"], coords={"range": r})
+        env_m = OceanEnvironment2D(
+            sound_speed=ssp_m, bathymetry=bathy_m, flat_earth_transform=False
+        )
+
+        source_range, receiver_range = 60e3, 10e3
+        angle = -15.0
+
+        ray_bwd = shoot_ray(
+            200.0,
+            source_range,
+            angle,
+            receiver_range,
+            80,
+            env,
+            rtol=1e-9,
+            flatearth=False,
+            debug=False,
+        )
+        ray_fwd_mirrored = shoot_ray(
+            200.0,
+            100e3 - source_range,
+            angle,
+            100e3 - receiver_range,
+            80,
+            env_m,
+            rtol=1e-9,
+            flatearth=False,
+            debug=False,
+        )
+        assert ray_bwd is not None
+        assert ray_fwd_mirrored is not None
+        # exercise the bounce-counting path, otherwise this test is too easy
+        assert (ray_bwd.n_bottom, ray_bwd.n_surface) == (
+            ray_fwd_mirrored.n_bottom,
+            ray_fwd_mirrored.n_surface,
+        )
+        assert (ray_bwd.n_bottom + ray_bwd.n_surface) > 0
+
+        np.testing.assert_allclose(ray_bwd.z, ray_fwd_mirrored.z, rtol=1e-4, atol=1e-2)
+        np.testing.assert_allclose(ray_bwd.t, ray_fwd_mirrored.t, rtol=1e-4, atol=1e-6)
+
+    def test_shoot_rays_backwards_matches_shoot_ray(self):
+        """shoot_rays() (multiprocessing branch) must agree with shoot_ray()
+        for backwards shots."""
+        env = _munk_env(r_max=50e3)
+        angles = np.linspace(-15.0, 15.0, 80)  # >70 triggers multiprocessing
+
+        rf = shoot_rays(
+            200.0, 40e3, angles, 5e3, 60, env, rtol=1e-9, flatearth=False, debug=False
+        )
+        assert len(rf) == len(angles)
+        assert np.allclose(rf.rs[:, 0], 40e3)
+        assert np.allclose(rf.rs[:, -1], 5e3)
+
+        idx = np.argmin(np.abs(rf.thetas - 7.0))
+        single = shoot_ray(
+            200.0,
+            40e3,
+            rf.thetas[idx],
+            5e3,
+            60,
+            env,
+            rtol=1e-9,
+            flatearth=False,
+            debug=False,
+        )
+        assert single is not None
+        np.testing.assert_allclose(rf.zs[idx], single.z, atol=1e-6)
