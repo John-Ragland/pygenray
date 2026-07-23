@@ -103,6 +103,14 @@ class RayFan:
         source_depths : np.array
             source depth for each launched ray, (M,) where M is launch angle
         """
+        if len(Rays) < 1:
+            raise ValueError(
+                f"RayFan requires at least 1 surviving ray to build a ray fan, "
+                f"got {len(Rays)}. This usually means the requested source/receiver "
+                f"range lies outside the environment's range domain, causing rays "
+                f"to be rejected immediately (see `debug=True` on shoot_rays/shoot_ray)."
+            )
+
         # unpack and combine Rays
         thetas = []
         rs = []
