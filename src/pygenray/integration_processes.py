@@ -18,21 +18,23 @@ References
 .. [Colosi2016] Colosi, J. A. (2016). Sound Propagation through the Stochastic Ocean, Cambridge University Press, 443 pages.
 
 """
+
 import numba
 import numpy as np
 
+
 @numba.njit(fastmath=True, cache=True)
 def derivsrd(
-        x : float,
-        y : np.array,
-        cin : np.array,
-        cpin : np.array,
-        rin : np.array,
-        zin : np.array,
-        depths: np.array,
-        depth_ranges : np.array,
-    ) -> np.array:
-    '''
+    x: float,
+    y: np.array,
+    cin: np.array,
+    cpin: np.array,
+    rin: np.array,
+    zin: np.array,
+    depths: np.array,
+    depth_ranges: np.array,
+) -> np.array:
+    """
     Compute the differential equations for ray propagation. The ray equations are derived from the Hamiltonian formulation for ray theory [Colosi2016a]_, which consist of three coupled ODEs with range as the independant varibale, given by equations :eq:`ray1d`, :eq:`ray2d`, and :eq:`ray3d`.
 
     .. math::
@@ -74,15 +76,15 @@ def derivsrd(
     References
     ----------
     .. [Colosi2016a] Colosi, J. A. (2016). Sound Propagation through the Stochastic Ocean, Cambridge University Press, 443 pages.
-    '''
-    
-    #unpack ray variables
-    z=y[1] # current depth
-    pz=y[2] # current ray parameter
+    """
 
-    #interpolate sound speed and its derivative at current depth and range
-    c = bilinear_interp(x,z,rin,zin,cin)
-    cp = bilinear_interp(x,z,rin,zin,cpin)
+    # unpack ray variables
+    z = y[1]  # current depth
+    pz = y[2]  # current ray parameter
+
+    # interpolate sound speed and its derivative at current depth and range
+    c = bilinear_interp(x, z, rin, zin, cin)
+    cp = bilinear_interp(x, z, rin, zin, cpin)
 
     # calculate derivatives
     # clamp to avoid division by zero when a Runge-Kutta intermediate stage
@@ -90,21 +92,18 @@ def derivsrd(
     arg = 1.0 - (c**2) * (pz**2)
     if arg <= 0.0:
         arg = 1e-30
-    fact=1/np.sqrt(arg)
-    dydx = np.array([
-        fact/c,
-        c*pz*fact,
-        -fact*cp/(c**2)
-    ])
+    fact = 1 / np.sqrt(arg)
+    dydx = np.array([fact / c, c * pz * fact, -fact * cp / (c**2)])
 
     return dydx
+
 
 @numba.njit(fastmath=True, cache=True)
 def bilinear_interp(x, y, x_grid, y_grid, values):
     """
     Perform bilinear interpolation on a 2D grid.
 
-    Fast, purely functional bilinear interpolation for scattered points on a 
+    Fast, purely functional bilinear interpolation for scattered points on a
     regular 2D grid using Numba JIT compilation for performance.
 
     Parameters
@@ -114,7 +113,7 @@ def bilinear_interp(x, y, x_grid, y_grid, values):
     y : float
         The y-coordinate at which to interpolate.
     x_grid : array_like
-        1-D array of x-coordinates of the grid points, must be sorted in 
+        1-D array of x-coordinates of the grid points, must be sorted in
         ascending order.
     y_grid : array_like
         1-D array of y-coordinates of the grid points, must be sorted in
@@ -152,29 +151,35 @@ def bilinear_interp(x, y, x_grid, y_grid, values):
     # Find grid indices
     i = np.searchsorted(x_grid, x) - 1
     j = np.searchsorted(y_grid, y) - 1
-    
+
     # Clamp to grid bounds
     i = max(0, min(i, len(x_grid) - 2))
     j = max(0, min(j, len(y_grid) - 2))
-    
+
     # Bilinear weights
-    wx = (x - x_grid[i]) / (x_grid[i+1] - x_grid[i])
-    wy = (y - y_grid[j]) / (y_grid[j+1] - y_grid[j])
-    
+    wx = (x - x_grid[i]) / (x_grid[i + 1] - x_grid[i])
+    wy = (y - y_grid[j]) / (y_grid[j + 1] - y_grid[j])
+
     # Interpolate
     v00 = values[i, j]
-    v10 = values[i+1, j] 
-    v01 = values[i, j+1]
-    v11 = values[i+1, j+1]
-    
-    return (1-wx)*(1-wy)*v00 + wx*(1-wy)*v10 + (1-wx)*wy*v01 + wx*wy*v11
+    v10 = values[i + 1, j]
+    v01 = values[i, j + 1]
+    v11 = values[i + 1, j + 1]
+
+    return (
+        (1 - wx) * (1 - wy) * v00
+        + wx * (1 - wy) * v10
+        + (1 - wx) * wy * v01
+        + wx * wy * v11
+    )
+
 
 @numba.njit(fastmath=True, cache=True)
 def linear_interp(x, xin, yin):
     """
     Perform linear interpolation on a 1D grid.
 
-    Fast, purely functional linear interpolation for scattered points on a 
+    Fast, purely functional linear interpolation for scattered points on a
     regular 1D grid using Numba JIT compilation for performance.
 
     Parameters
@@ -182,7 +187,7 @@ def linear_interp(x, xin, yin):
     x_interp : float
         The x-coordinate at which to interpolate.
     xin : array_like
-        1-D array of x-coordinates of the grid points, must be sorted in 
+        1-D array of x-coordinates of the grid points, must be sorted in
         ascending order.
     yin : array_like
         1-D array of shape (len(x_grid),) containing the values
@@ -211,23 +216,24 @@ def linear_interp(x, xin, yin):
     >>> result = linear_interp(0.5, x_grid, values)
     >>> print(result)  # Should be 2.5
     """
-    
+
     # Find grid index
     i = np.searchsorted(xin, x) - 1
-    
+
     # Clamp to grid bounds
     i = max(0, min(i, len(xin) - 2))
-    
+
     # Linear weight
-    w = (x - xin[i]) / (xin[i+1] - xin[i])
-    
+    w = (x - xin[i]) / (xin[i + 1] - xin[i])
+
     # Interpolate
     v0 = yin[i]
-    v1 = yin[i+1]
-    
-    y_interp = (1-w)*v0 + w*v1
+    v1 = yin[i + 1]
+
+    y_interp = (1 - w) * v0 + w * v1
 
     return y_interp
+
 
 @numba.njit(fastmath=True, cache=True)
 def surface_bounce(x, y, cin, cpin, rin, zin, depths, depth_ranges):
@@ -235,13 +241,14 @@ def surface_bounce(x, y, cin, cpin, rin, zin, depths, depth_ranges):
     ray_depth = y[1]
 
     # calculate ray angle
-    ray_theta,c = ray_angle(x,y,cin, rin, zin)
+    ray_theta, c = ray_angle(x, y, cin, rin, zin)
 
     # trigger event when ray crosses surface boundary and is traveling upwards
     if (ray_depth < 0) and (ray_theta < 0):
         return 1.0
     else:
         return -1.0
+
 
 @numba.njit(fastmath=True, cache=True)
 def bottom_bounce(x, y, cin, cpin, rin, zin, depths, depth_ranges):
@@ -250,7 +257,7 @@ def bottom_bounce(x, y, cin, cpin, rin, zin, depths, depth_ranges):
     ray_depth = y[1]
 
     # calculate ray angle
-    ray_theta, c = ray_angle(x,y,cin, rin, zin)
+    ray_theta, c = ray_angle(x, y, cin, rin, zin)
 
     # trigger event when ray crosses boundary and is traveling downwards
     if (ray_depth > bottom_depth) and (ray_theta > 0):
@@ -258,26 +265,28 @@ def bottom_bounce(x, y, cin, cpin, rin, zin, depths, depth_ranges):
     else:
         return -1.0
 
+
 @numba.njit(fastmath=True, cache=True)
 def vertical_ray(x, y, cin, cpin, rin, zin, depths, depth_ranges):
     """Vertical ray event: trigger when ray is vertical (θ = 90 degrees)"""
 
-    ray_theta, _ = ray_angle(x,y,cin, rin, zin)
-    if np.abs(ray_theta) > (90-1e-3): # within 0.001 degree
+    ray_theta, _ = ray_angle(x, y, cin, rin, zin)
+    if np.abs(ray_theta) > (90 - 1e-3):  # within 0.001 degree
         return 1.0
     else:
         return -1.0
 
+
 @numba.njit(fastmath=True, cache=True)
-def ray_bounding_box_event(x,y,cin, cpin, rin, zin, depths, depth_ranges):
-    '''
+def ray_bounding_box_event(x, y, cin, cpin, rin, zin, depths, depth_ranges):
+    """
     Ray Bounding Box Event - trigger when ray position goes outside of bounding box. Bounding box is defined as the box where sound speed is defined.
 
     Returns
     -------
     bbox : float
         1.0 if ray is outside bounding box, -1.0 otherwise
-    '''
+    """
 
     z = y[1]
 
@@ -286,22 +295,19 @@ def ray_bounding_box_event(x,y,cin, cpin, rin, zin, depths, depth_ranges):
     tol = 1e-6
 
     bbox = (
-        (z > zin[-1] + tol) | (z < zin[0] - tol) |
-        (x < rin[0] - tol) | (x > rin[-1] + tol)
+        (z > zin[-1] + tol)
+        | (z < zin[0] - tol)
+        | (x < rin[0] - tol)
+        | (x > rin[-1] + tol)
     )
     return 1.0 if bbox else -1.0
 
+
 @numba.njit(fastmath=True, cache=True)
-def ray_angle(
-        x : float,
-        y : np.array,
-        cin : np.array,
-        rin : np.array,
-        zin : np.array
-):
+def ray_angle(x: float, y: np.array, cin: np.array, rin: np.array, zin: np.array):
     """
     calculate angle of ray for specific ray state
-    
+
     Parameters
     ----------
     x : float
@@ -325,17 +331,16 @@ def ray_angle(
 
     c = bilinear_interp(x, y[1], rin, zin, cin)
     theta = np.degrees(np.arcsin(y[2] * c))
-    return theta,c
+    return theta, c
 
 
 __all__ = [
-    'derivsrd',
-    'bottom_bounce',
-    'surface_bounce',
-    'ray_bounding_box_event',
-    'ray_angle',
-    'bilinear_interp',
-    'linear_interp',
-    'vertical_ray',
+    "derivsrd",
+    "bottom_bounce",
+    "surface_bounce",
+    "ray_bounding_box_event",
+    "ray_angle",
+    "bilinear_interp",
+    "linear_interp",
+    "vertical_ray",
 ]
-
